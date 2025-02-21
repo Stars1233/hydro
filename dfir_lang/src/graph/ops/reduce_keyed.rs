@@ -10,7 +10,7 @@ use crate::diagnostic::{Diagnostic, Level};
 /// > The output will have one tuple for each distinct `K`, with an accumulated (reduced) value of
 /// > type `V`.
 ///
-/// If you need the accumulated value to have a different type than the input, use [`fold_keyed`](#keyed_fold).
+/// If you need the accumulated value to have a different type than the input, use [`fold_keyed`](#fold_keyed).
 ///
 /// > Arguments: one Rust closures. The closure takes two arguments: an `&mut` 'accumulator', and
 /// > an element. Accumulator should be updated based on the element.
@@ -75,7 +75,7 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
     ports_out: None,
     input_delaytype_fn: |_| Some(DelayType::Stratum),
     write_fn: |wc @ &WriteContextArgs {
-                   hydroflow,
+                   df_ident,
                    context,
                    op_span,
                    ident,
@@ -125,7 +125,7 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
 
                 (
                     quote_spanned! {op_span=>
-                        let #groupbydata_ident = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
+                        let #groupbydata_ident = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
                     },
                     quote_spanned! {op_span=>
                         let mut #hashtable_ident = #context.state_ref(#groupbydata_ident).borrow_mut();
@@ -165,7 +165,7 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
 
                 (
                     quote_spanned! {op_span=>
-                        let #groupbydata_ident = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
+                        let #groupbydata_ident = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
                     },
                     quote_spanned! {op_span=>
                         let mut #hashtable_ident = #context.state_ref(#groupbydata_ident).borrow_mut();

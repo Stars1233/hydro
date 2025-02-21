@@ -7,7 +7,7 @@ use super::{
 };
 use crate::diagnostic::{Diagnostic, Level};
 
-/// > 2 input streams of type <(K, V1)> and <(K, V2)>, 1 output stream of type <(K, (V1, V2))>
+/// > 2 input streams of type `<(K, V1)>` and `<(K, V2)>`, 1 output stream of type `<(K, (V1, V2))>`
 ///
 /// Forms the equijoin of the tuples in the input streams by their first (key) attribute. Note that the result nests the 2nd input field (values) into a tuple in the 2nd output field.
 ///
@@ -98,7 +98,7 @@ pub const JOIN: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    inputs,
@@ -139,7 +139,7 @@ pub const JOIN: OperatorConstraints = OperatorConstraints {
             let borrow_ident = wc.make_ident(format!("joindata_{}_borrow", side));
             let reset = match persistence {
                 Persistence::Tick => quote_spanned! {op_span=>
-                    #hydroflow.set_state_tick_hook(#joindata_ident, |rcell| #root::util::clear::Clear::clear(rcell.get_mut()));
+                    #df_ident.set_state_tick_hook(#joindata_ident, |rcell| #root::util::clear::Clear::clear(rcell.get_mut()));
                 },
                 Persistence::Static => Default::default(),
                 Persistence::Mutable => {
@@ -152,7 +152,7 @@ pub const JOIN: OperatorConstraints = OperatorConstraints {
                 }
             };
             let init = quote_spanned! {op_span=>
-                let #joindata_ident = #hydroflow.add_state(::std::cell::RefCell::new(
+                let #joindata_ident = #df_ident.add_state(::std::cell::RefCell::new(
                     #join_type::default()
                 ));
                 #reset

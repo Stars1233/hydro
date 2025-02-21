@@ -10,7 +10,7 @@ use trybuild_internals_api::env::Update;
 use trybuild_internals_api::run::{PathDependency, Project};
 use trybuild_internals_api::{dependencies, features, path, Runner};
 
-use super::trybuild_rewriters::{ReplaceCrateNameWithStaged, ReplaceCrateWithOrig};
+use super::trybuild_rewriters::ReplaceCrateNameWithStaged;
 
 static IS_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -33,6 +33,7 @@ pub fn create_graph_trybuild(
     graph: DfirGraph,
     extra_stmts: Vec<syn::Stmt>,
     name_hint: &Option<String>,
+    hydro_additional_features: &[String],
 ) -> (String, (PathBuf, PathBuf, Option<Vec<String>>)) {
     let source_dir = cargo::manifest_dir().unwrap();
     let source_manifest = dependencies::get_manifest(&source_dir).unwrap();
@@ -44,19 +45,19 @@ pub fn create_graph_trybuild(
 
     ReplaceCrateNameWithStaged {
         crate_name: crate_name.clone(),
+        is_test,
     }
     .visit_file_mut(&mut generated_code);
 
-    let mut inlined_staged = stageleft_tool::gen_staged_trybuild(
-        &path!(source_dir / "src" / "lib.rs"),
-        crate_name.clone(),
-        is_test,
-    );
-
-    ReplaceCrateWithOrig {
-        crate_name: crate_name.clone(),
-    }
-    .visit_file_mut(&mut inlined_staged);
+    let inlined_staged = if is_test {
+        stageleft_tool::gen_staged_trybuild(
+            &path!(source_dir / "src" / "lib.rs"),
+            crate_name.clone(),
+            is_test,
+        )
+    } else {
+        syn::parse_quote!()
+    };
 
     let source = prettyplease::unparse(&syn::parse_quote! {
         #generated_code
@@ -84,7 +85,8 @@ pub fn create_graph_trybuild(
         hash
     };
 
-    let trybuild_created = create_trybuild(&source, &bin_name, is_test).unwrap();
+    let trybuild_created =
+        create_trybuild(&source, &bin_name, is_test, hydro_additional_features).unwrap();
     (bin_name, trybuild_created)
 }
 
@@ -104,7 +106,7 @@ pub fn compile_graph_trybuild(graph: DfirGraph, extra_stmts: Vec<syn::Stmt>) -> 
         use hydro_lang::*;
 
         #[allow(unused)]
-        fn __hydro_runtime<'a>(__hydro_lang_trybuild_cli: &'a hydro_lang::dfir_rs::util::deploy::DeployPorts<hydro_lang::deploy_runtime::HydroflowPlusMeta>) -> hydro_lang::dfir_rs::scheduled::graph::Dfir<'a> {
+        fn __hydro_runtime<'a>(__hydro_lang_trybuild_cli: &'a hydro_lang::dfir_rs::util::deploy::DeployPorts<hydro_lang::deploy_runtime::HydroMeta>) -> hydro_lang::dfir_rs::scheduled::graph::Dfir<'a> {
             #(#extra_stmts)*
             #tokens
         }
@@ -114,7 +116,8 @@ pub fn compile_graph_trybuild(graph: DfirGraph, extra_stmts: Vec<syn::Stmt>) -> 
             let ports = hydro_lang::dfir_rs::util::deploy::init_no_ack_start().await;
             let flow = __hydro_runtime(&ports);
             println!("ack start");
-            hydro_lang::dfir_rs::util::deploy::launch_flow(flow).await;
+
+            hydro_lang::runtime_support::resource_measurement::run(flow).await;
         }
     };
     source_ast
@@ -124,6 +127,7 @@ pub fn create_trybuild(
     source: &str,
     bin: &str,
     is_test: bool,
+    hydro_additional_features: &[String],
 ) -> Result<(PathBuf, PathBuf, Option<Vec<String>>), trybuild_internals_api::error::Error> {
     let Metadata {
         target_directory: target_dir,
@@ -185,6 +189,11 @@ pub fn create_trybuild(
                 v.retain(|f| f != "stageleft_devel");
             });
     }
+
+    let hydro_dep = manifest.dependencies.get_mut("hydro_lang").unwrap();
+    hydro_dep
+        .features
+        .extend(hydro_additional_features.iter().cloned());
 
     let project = Project {
         dir: project_dir,
