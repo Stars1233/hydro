@@ -16,7 +16,7 @@ pub fn count_elems_generic<'a, T: 'a>(
     let source = process.source_stream(input_stream);
     let count = unsafe {
         // SAFETY: intentionally using ticks
-        source.map(q!(|_| 1)).timestamped(&tick).tick_batch()
+        source.map(q!(|_| 1)).tick_batch(&tick)
     }
     .fold(q!(|| 0), q!(|a, b| *a += b))
     .all_ticks();
@@ -37,7 +37,7 @@ pub fn count_elems<'a>(
     count_elems_generic(flow, input_stream, output)
 }
 
-#[stageleft::runtime]
+#[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
     use dfir_rs::assert_graphvis_snapshots;

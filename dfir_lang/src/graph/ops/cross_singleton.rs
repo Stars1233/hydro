@@ -50,7 +50,7 @@ pub const CROSS_SINGLETON: OperatorConstraints = OperatorConstraints {
     },
     write_fn: |wc @ &WriteContextArgs {
                    context,
-                   hydroflow,
+                   df_ident,
                    ident,
                    op_span,
                    inputs,
@@ -65,23 +65,25 @@ pub const CROSS_SINGLETON: OperatorConstraints = OperatorConstraints {
         let singleton_handle_ident = wc.make_ident("singleton_handle");
 
         let write_prologue = quote_spanned! {op_span=>
-            let #singleton_handle_ident = #hydroflow.add_state(
+            let #singleton_handle_ident = #df_ident.add_state(
                 ::std::cell::RefCell::new(::std::option::Option::None)
             );
             // Reset the value if it is a new tick.
-            #hydroflow.set_state_tick_hook(#singleton_handle_ident, |rcell| { rcell.take(); });
+            #df_ident.set_state_tick_hook(#singleton_handle_ident, |rcell| { rcell.take(); });
         };
 
         let write_iterator = quote_spanned! {op_span=>
             let #ident = {
                 #[inline(always)]
-                fn cross_singleton_guard<Singleton, Item>(
+                fn cross_singleton_guard<Singleton, Item, SingletonIter, Stream>(
                     mut singleton_state_mut: std::cell::RefMut<'_, Option<Singleton>>,
-                    mut singleton_input: impl Iterator<Item = Singleton>,
-                    stream_input: impl Iterator<Item = Item>,
-                ) -> impl Iterator<Item = (Item, Singleton)>
+                    mut singleton_input: SingletonIter,
+                    stream_input: Stream,
+                ) -> impl use<Item, Singleton, Stream, /*TODO: https://github.com/rust-lang/rust/issues/130043 */ SingletonIter> + Iterator<Item = (Item, Singleton)>
                 where
                     Singleton: ::std::clone::Clone,
+                    SingletonIter: Iterator<Item = Singleton>,
+                    Stream: Iterator<Item = Item>,
                 {
                     let singleton_value_opt = match &*singleton_state_mut {
                         ::std::option::Option::Some(singleton_value) => Some(singleton_value.clone()),
