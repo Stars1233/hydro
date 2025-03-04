@@ -1,8 +1,8 @@
-use quote::{quote_spanned, ToTokens};
+use quote::{ToTokens, quote_spanned};
 
 use super::{
-    DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints,
-    OperatorInstance, OperatorWriteOutput, Persistence, WriteContextArgs, RANGE_1,
+    DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
+    OperatorWriteOutput, Persistence, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -10,7 +10,7 @@ use crate::diagnostic::{Diagnostic, Level};
 /// > The output will have one tuple for each distinct `K`, with an accumulated (reduced) value of
 /// > type `V`.
 ///
-/// If you need the accumulated value to have a different type than the input, use [`fold_keyed`](#keyed_fold).
+/// If you need the accumulated value to have a different type than the input, use [`fold_keyed`](#fold_keyed).
 ///
 /// > Arguments: one Rust closures. The closure takes two arguments: an `&mut` 'accumulator', and
 /// > an element. Accumulator should be updated based on the element.
@@ -75,12 +75,13 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
     ports_out: None,
     input_delaytype_fn: |_| Some(DelayType::Stratum),
     write_fn: |wc @ &WriteContextArgs {
-                   hydroflow,
+                   df_ident,
                    context,
                    op_span,
                    ident,
                    inputs,
                    is_pull,
+                   work_fn,
                    root,
                    op_inst:
                        OperatorInstance {
@@ -125,12 +126,12 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
 
                 (
                     quote_spanned! {op_span=>
-                        let #groupbydata_ident = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
+                        let #groupbydata_ident = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
                     },
                     quote_spanned! {op_span=>
                         let mut #hashtable_ident = #context.state_ref(#groupbydata_ident).borrow_mut();
 
-                        {
+                        #work_fn(|| {
                             #[inline(always)]
                             fn check_input<Iter: ::std::iter::Iterator<Item = (A, B)>, A: ::std::clone::Clone, B: ::std::clone::Clone>(iter: Iter)
                                 -> impl ::std::iter::Iterator<Item = (A, B)> { iter }
@@ -152,7 +153,7 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
                                     }
                                 }
                             }
-                        }
+                        });
 
                         let #ident = #hashtable_ident.drain();
                     },
@@ -165,12 +166,12 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
 
                 (
                     quote_spanned! {op_span=>
-                        let #groupbydata_ident = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
+                        let #groupbydata_ident = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::<#( #generic_type_args ),*>::default()));
                     },
                     quote_spanned! {op_span=>
                         let mut #hashtable_ident = #context.state_ref(#groupbydata_ident).borrow_mut();
 
-                        {
+                        #work_fn(|| {
                             #[inline(always)]
                             fn check_input<Iter: ::std::iter::Iterator<Item = (A, B)>, A: ::std::clone::Clone, B: ::std::clone::Clone>(iter: Iter)
                                 -> impl ::std::iter::Iterator<Item = (A, B)> { iter }
@@ -192,7 +193,7 @@ pub const REDUCE_KEYED: OperatorConstraints = OperatorConstraints {
                                     }
                                 }
                             }
-                        }
+                        });
 
                         let #ident = #context.is_first_run_this_tick()
                             .then_some(#hashtable_ident.iter())

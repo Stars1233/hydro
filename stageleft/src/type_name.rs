@@ -2,7 +2,7 @@ use std::sync::{LazyLock, RwLock};
 
 use proc_macro2::Span;
 use syn::visit_mut::VisitMut;
-use syn::{parse_quote, TypeInfer};
+use syn::{TypeInfer, parse_quote};
 
 use crate::runtime_support::get_final_crate_name;
 
@@ -22,6 +22,8 @@ static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
             vec!["std", "collections", "hash_set"],
         ),
         (vec!["std", "vec", "into_iter"], vec!["std", "vec"]),
+        (vec!["tokio", "time", "instant"], vec!["tokio", "time"]),
+        (vec!["bytes", "bytes"], vec!["bytes"]),
     ])
 });
 

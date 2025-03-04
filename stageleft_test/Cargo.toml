@@ -2,13 +2,14 @@
 name = "stageleft_test"
 publish = false
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 
 [lints]
 workspace = true
 
 [features]
 stageleft_devel = []
+test_feature = []
 
 [dependencies]
 stageleft = { path = "../stageleft", version = "^0.6.0" }

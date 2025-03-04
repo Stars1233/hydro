@@ -5,11 +5,11 @@ use std::time::Duration;
 use dfir_rs::futures::stream::Stream as FuturesStream;
 use dfir_rs::{tokio, tokio_stream};
 use proc_macro2::Span;
-use stageleft::{q, QuotedWithContext};
+use stageleft::{QuotedWithContext, q};
 
 use super::builder::FlowState;
 use crate::cycle::{CycleCollection, ForwardRef, ForwardRefMarker};
-use crate::ir::{HydroNode, HydroSource};
+use crate::ir::{DebugType, HydroIrMetadata, HydroNode, HydroSource};
 use crate::{Singleton, Stream, Unbounded};
 
 pub mod external_process;
@@ -25,9 +25,9 @@ pub mod can_send;
 pub use can_send::CanSend;
 
 pub mod tick;
-pub use tick::{NoTick, Tick, Timestamped};
+pub use tick::{Atomic, NoTick, Tick};
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum LocationId {
     Process(usize),
     Cluster(usize),
@@ -82,16 +82,35 @@ pub trait Location<'a>: Clone {
         }
     }
 
+    fn next_node_id(&self) -> usize {
+        let next_id = self.flow_state().borrow_mut().next_node_id;
+        self.flow_state().borrow_mut().next_node_id += 1;
+        next_id
+    }
+
+    fn new_node_metadata<T>(&self) -> HydroIrMetadata {
+        HydroIrMetadata {
+            location_kind: self.id(),
+            output_type: Some(DebugType(stageleft::quote_type::<T>())),
+            cardinality: None,
+            cpu_usage: None,
+        }
+    }
+
     fn spin(&self) -> Stream<(), Self, Unbounded>
     where
         Self: Sized + NoTick,
     {
         Stream::new(
             self.clone(),
-            HydroNode::Persist(Box::new(HydroNode::Source {
-                source: HydroSource::Spin(),
-                location_kind: self.id(),
-            })),
+            HydroNode::Persist {
+                inner: Box::new(HydroNode::Source {
+                    source: HydroSource::Spin(),
+                    location_kind: self.id(),
+                    metadata: self.new_node_metadata::<()>(),
+                }),
+                metadata: self.new_node_metadata::<()>(),
+            },
         )
     }
 
@@ -106,10 +125,14 @@ pub trait Location<'a>: Clone {
 
         Stream::new(
             self.clone(),
-            HydroNode::Persist(Box::new(HydroNode::Source {
-                source: HydroSource::Stream(e.into()),
-                location_kind: self.id(),
-            })),
+            HydroNode::Persist {
+                inner: Box::new(HydroNode::Source {
+                    source: HydroSource::Stream(e.into()),
+                    location_kind: self.id(),
+                    metadata: self.new_node_metadata::<T>(),
+                }),
+                metadata: self.new_node_metadata::<T>(),
+            },
         )
     }
 
@@ -126,10 +149,14 @@ pub trait Location<'a>: Clone {
 
         Stream::new(
             self.clone(),
-            HydroNode::Persist(Box::new(HydroNode::Source {
-                source: HydroSource::Iter(e.into()),
-                location_kind: self.id(),
-            })),
+            HydroNode::Persist {
+                inner: Box::new(HydroNode::Source {
+                    source: HydroSource::Iter(e.into()),
+                    location_kind: self.id(),
+                    metadata: self.new_node_metadata::<T>(),
+                }),
+                metadata: self.new_node_metadata::<T>(),
+            },
         )
     }
 
@@ -151,10 +178,17 @@ pub trait Location<'a>: Clone {
         // so that it grows every tick
         Singleton::new(
             self.clone(),
-            HydroNode::Persist(Box::new(HydroNode::Persist(Box::new(HydroNode::Source {
-                source: HydroSource::Iter(e.into()),
-                location_kind: self.id(),
-            })))),
+            HydroNode::Persist {
+                inner: Box::new(HydroNode::Persist {
+                    inner: Box::new(HydroNode::Source {
+                        source: HydroSource::Iter(e.into()),
+                        location_kind: self.id(),
+                        metadata: self.new_node_metadata::<T>(),
+                    }),
+                    metadata: self.new_node_metadata::<T>(),
+                }),
+                metadata: self.new_node_metadata::<T>(),
+            },
         )
     }
 
@@ -228,6 +262,7 @@ pub trait Location<'a>: Clone {
 
         (
             ForwardRef {
+                completed: false,
                 ident: ident.clone(),
                 expected_location: self.id(),
                 _phantom: PhantomData,

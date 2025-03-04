@@ -1,8 +1,7 @@
 use quote::quote_spanned;
 
 use super::{
-    OperatorCategory, OperatorConstraints, OperatorWriteOutput, WriteContextArgs,
-    RANGE_0, RANGE_1,
+    OperatorCategory, OperatorConstraints, OperatorWriteOutput, RANGE_0, RANGE_1, WriteContextArgs,
 };
 
 // TODO(mingwei): more doc
@@ -54,11 +53,12 @@ pub const MULTISET_DELTA: OperatorConstraints = OperatorConstraints {
                    root,
                    op_span,
                    context,
-                   hydroflow,
+                   df_ident,
                    ident,
                    inputs,
                    outputs,
                    is_pull,
+                   work_fn,
                    ..
                },
                _| {
@@ -69,8 +69,8 @@ pub const MULTISET_DELTA: OperatorConstraints = OperatorConstraints {
         let curr_data = wc.make_ident("curr_data");
 
         let write_prologue = quote_spanned! {op_span=>
-            let #prev_data = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::default()));
-            let #curr_data = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::default()));
+            let #prev_data = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::default()));
+            let #curr_data = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashMap::default()));
         };
 
         let tick_swap = quote_spanned! {op_span=>
@@ -105,12 +105,12 @@ pub const MULTISET_DELTA: OperatorConstraints = OperatorConstraints {
         };
         let write_iterator = if is_pull {
             quote_spanned! {op_span=>
-                #tick_swap
+                #work_fn(|| #tick_swap);
                 let #ident = #input.filter(#filter_fn);
             }
         } else {
             quote_spanned! {op_span=>
-                #tick_swap
+                #work_fn(|| #tick_swap);
                 let #ident = #root::pusherator::filter::Filter::new(#filter_fn, #output);
             }
         };

@@ -1,10 +1,9 @@
-use quote::{quote_spanned, ToTokens};
+use quote::{ToTokens, quote_spanned};
 use syn::parse_quote;
 
 use super::{
-    DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints,
-    OperatorInstance, OperatorWriteOutput, Persistence, PortIndexValue, WriteContextArgs, RANGE_0,
-    RANGE_1,
+    DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
+    OperatorWriteOutput, Persistence, PortIndexValue, RANGE_0, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -49,10 +48,11 @@ pub const ANTI_JOIN: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    inputs,
+                   work_fn,
                    op_inst:
                        OperatorInstance {
                            generics:
@@ -109,10 +109,10 @@ pub const ANTI_JOIN: OperatorConstraints = OperatorConstraints {
             make_antijoindata(persistences[1], "neg")?;
 
         let write_prologue = quote_spanned! {op_span=>
-            let #neg_antijoindata_ident = #hydroflow.add_state(std::cell::RefCell::new(
+            let #neg_antijoindata_ident = #df_ident.add_state(std::cell::RefCell::new(
                 #neg_init
             ));
-            let #pos_antijoindata_ident = #hydroflow.add_state(std::cell::RefCell::new(
+            let #pos_antijoindata_ident = #df_ident.add_state(std::cell::RefCell::new(
                 #pos_init
             ));
         };
@@ -139,7 +139,7 @@ pub const ANTI_JOIN: OperatorConstraints = OperatorConstraints {
                         I1: 'a + Iterator<Item = K>,
                         I2: 'a + Iterator<Item = (K, V)>,
                     {
-                        neg_state.extend(input_neg);
+                        #work_fn(|| neg_state.extend(input_neg));
 
                         #root::compiled::pull::anti_join_into_iter(input_pos, neg_state, pos_state, is_new_tick)
                     }

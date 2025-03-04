@@ -6,8 +6,8 @@ use std::pin::Pin;
 use dfir_rs::bytes::Bytes;
 use dfir_rs::futures::{Sink, Stream};
 use proc_macro2::Span;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use stageleft::QuotedWithContext;
 
 use super::built::build_inner;
@@ -25,9 +25,19 @@ use crate::staging_util::Invariant;
 
 pub struct DeployFlow<'a, D: LocalDeploy<'a>> {
     pub(super) ir: Vec<HydroLeaf>,
-    pub(super) nodes: HashMap<usize, D::Process>,
+
+    /// Deployed instances of each process in the flow
+    pub(super) processes: HashMap<usize, D::Process>,
+
+    /// Lists all the processes that were created in the flow, same ID as `processes`
+    /// but with the type name of the tag.
+    pub(super) process_id_name: Vec<(usize, String)>,
+
     pub(super) externals: HashMap<usize, D::ExternalProcess>,
+    pub(super) external_id_name: Vec<(usize, String)>,
+
     pub(super) clusters: HashMap<usize, D::Cluster>,
+    pub(super) cluster_id_name: Vec<(usize, String)>,
     pub(super) used: bool,
 
     pub(super) _phantom: Invariant<'a, D>,
@@ -36,7 +46,9 @@ pub struct DeployFlow<'a, D: LocalDeploy<'a>> {
 impl<'a, D: LocalDeploy<'a>> Drop for DeployFlow<'a, D> {
     fn drop(&mut self) {
         if !self.used {
-            panic!("Dropped DeployFlow without instantiating, you may have forgotten to call `compile` or `deploy`.");
+            panic!(
+                "Dropped DeployFlow without instantiating, you may have forgotten to call `compile` or `deploy`."
+            );
         }
     }
 }
@@ -52,10 +64,22 @@ impl<'a, D: LocalDeploy<'a>> DeployFlow<'a, D> {
         spec: impl IntoProcessSpec<'a, D>,
     ) -> Self {
         let tag_name = std::any::type_name::<P>().to_string();
-        self.nodes.insert(
+        self.processes.insert(
             process.id,
             spec.into_process_spec().build(process.id, &tag_name),
         );
+        self
+    }
+
+    pub fn with_remaining_processes<S: IntoProcessSpec<'a, D> + 'a>(
+        mut self,
+        spec: impl Fn() -> S,
+    ) -> Self {
+        for (id, name) in &self.process_id_name {
+            self.processes
+                .insert(*id, spec().into_process_spec().build(*id, name));
+        }
+
         self
     }
 
@@ -70,6 +94,17 @@ impl<'a, D: LocalDeploy<'a>> DeployFlow<'a, D> {
         self
     }
 
+    pub fn with_remaining_externals<S: ExternalSpec<'a, D> + 'a>(
+        mut self,
+        spec: impl Fn() -> S,
+    ) -> Self {
+        for (id, name) in &self.external_id_name {
+            self.externals.insert(*id, spec().build(*id, name));
+        }
+
+        self
+    }
+
     pub fn with_cluster<C>(mut self, cluster: &Cluster<C>, spec: impl ClusterSpec<'a, D>) -> Self {
         let tag_name = std::any::type_name::<C>().to_string();
         self.clusters
@@ -77,11 +112,22 @@ impl<'a, D: LocalDeploy<'a>> DeployFlow<'a, D> {
         self
     }
 
+    pub fn with_remaining_clusters<S: ClusterSpec<'a, D> + 'a>(
+        mut self,
+        spec: impl Fn() -> S,
+    ) -> Self {
+        for (id, name) in &self.cluster_id_name {
+            self.clusters.insert(*id, spec().build(*id, name));
+        }
+
+        self
+    }
+
     pub fn compile_no_network(mut self) -> CompiledFlow<'a, D::GraphId> {
         self.used = true;
 
         CompiledFlow {
-            hydroflow_ir: build_inner(&mut self.ir),
+            dfir: build_inner(&mut self.ir),
             extra_stmts: BTreeMap::new(),
             _phantom: PhantomData,
         }
@@ -93,23 +139,22 @@ impl<'a, D: Deploy<'a>> DeployFlow<'a, D> {
         self.used = true;
 
         let mut seen_tees: HashMap<_, _> = HashMap::new();
-        let mut flow_state_networked: Vec<HydroLeaf> = std::mem::take(&mut self.ir)
-            .into_iter()
-            .map(|leaf| {
-                leaf.compile_network::<D>(
-                    env,
-                    &mut seen_tees,
-                    &self.nodes,
-                    &self.clusters,
-                    &self.externals,
-                )
-            })
-            .collect();
+        let mut seen_tee_locations: HashMap<_, _> = HashMap::new();
+        self.ir.iter_mut().for_each(|leaf| {
+            leaf.compile_network::<D>(
+                env,
+                &mut seen_tees,
+                &mut seen_tee_locations,
+                &self.processes,
+                &self.clusters,
+                &self.externals,
+            );
+        });
 
         let extra_stmts = self.extra_stmts(env);
 
         CompiledFlow {
-            hydroflow_ir: build_inner(&mut flow_state_networked),
+            dfir: build_inner(&mut self.ir),
             extra_stmts,
             _phantom: PhantomData,
         }
@@ -130,7 +175,7 @@ impl<'a, D: Deploy<'a>> DeployFlow<'a, D> {
                     let #self_id_ident = #self_id_expr;
                 });
 
-            for other_location in self.nodes.keys().chain(self.clusters.keys()) {
+            for other_location in self.processes.keys().chain(self.clusters.keys()) {
                 let other_id_ident = syn::Ident::new(
                     &format!("__hydro_lang_cluster_ids_{}", c_id),
                     Span::call_site(),
@@ -154,25 +199,24 @@ impl<'a, D: Deploy<'a, CompileEnv = ()>> DeployFlow<'a, D> {
         self.used = true;
 
         let mut seen_tees_instantiate: HashMap<_, _> = HashMap::new();
-        let mut flow_state_networked: Vec<HydroLeaf> = std::mem::take(&mut self.ir)
-            .into_iter()
-            .map(|leaf| {
-                leaf.compile_network::<D>(
-                    &(),
-                    &mut seen_tees_instantiate,
-                    &self.nodes,
-                    &self.clusters,
-                    &self.externals,
-                )
-            })
-            .collect();
+        let mut seen_tee_locations: HashMap<_, _> = HashMap::new();
+        self.ir.iter_mut().for_each(|leaf| {
+            leaf.compile_network::<D>(
+                &(),
+                &mut seen_tees_instantiate,
+                &mut seen_tee_locations,
+                &self.processes,
+                &self.clusters,
+                &self.externals,
+            );
+        });
 
-        let mut compiled = build_inner(&mut flow_state_networked);
+        let mut compiled = build_inner(&mut self.ir);
         let mut extra_stmts = self.extra_stmts(&());
         let mut meta = D::Meta::default();
 
         let (mut processes, mut clusters, mut externals) = (
-            std::mem::take(&mut self.nodes)
+            std::mem::take(&mut self.processes)
                 .into_iter()
                 .filter_map(|(node_id, node)| {
                     if let Some(ir) = compiled.remove(&node_id) {
@@ -231,14 +275,17 @@ impl<'a, D: Deploy<'a, CompileEnv = ()>> DeployFlow<'a, D> {
         }
 
         let mut seen_tees_connect = HashMap::new();
-        for leaf in flow_state_networked {
+        self.ir.iter_mut().for_each(|leaf| {
             leaf.connect_network(&mut seen_tees_connect);
-        }
+        });
 
         DeployResult {
             processes,
             clusters,
             externals,
+            cluster_id_name: std::mem::take(&mut self.cluster_id_name)
+                .into_iter()
+                .collect(),
         }
     }
 }
@@ -247,6 +294,7 @@ pub struct DeployResult<'a, D: Deploy<'a>> {
     processes: HashMap<usize, D::Process>,
     clusters: HashMap<usize, D::Cluster>,
     externals: HashMap<usize, D::ExternalProcess>,
+    cluster_id_name: HashMap<usize, String>,
 }
 
 impl<'a, D: Deploy<'a>> DeployResult<'a, D> {
@@ -266,6 +314,16 @@ impl<'a, D: Deploy<'a>> DeployResult<'a, D> {
         };
 
         self.clusters.get(&id).unwrap()
+    }
+
+    pub fn get_all_clusters(&self) -> impl Iterator<Item = (LocationId, String, &D::Cluster)> {
+        self.clusters.iter().map(|(&id, c)| {
+            (
+                LocationId::Cluster(id),
+                self.cluster_id_name.get(&id).unwrap().clone(),
+                c,
+            )
+        })
     }
 
     pub fn get_external<P>(&self, p: &ExternalProcess<P>) -> &D::ExternalProcess {

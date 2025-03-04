@@ -2,7 +2,7 @@ use quote::quote_spanned;
 
 use super::{
     DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
-    OperatorWriteOutput, Persistence, WriteContextArgs, RANGE_0, RANGE_1,
+    OperatorWriteOutput, Persistence, RANGE_0, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -52,12 +52,13 @@ pub const FOLD: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    is_pull,
                    inputs,
                    singleton_output_ident,
+                   work_fn,
                    op_inst:
                        OperatorInstance {
                            generics:
@@ -109,14 +110,14 @@ pub const FOLD: OperatorConstraints = OperatorConstraints {
             let mut #initializer_func_ident = #init;
 
             #[allow(clippy::redundant_closure_call)]
-            let #singleton_output_ident = #hydroflow.add_state(
+            let #singleton_output_ident = #df_ident.add_state(
                 ::std::cell::RefCell::new((#initializer_func_ident)())
             );
         };
         if Persistence::Tick == persistence {
             write_prologue.extend(quote_spanned! {op_span=>
                 // Reset the value to the initializer fn if it is a new tick.
-                #hydroflow.set_state_tick_hook(#singleton_output_ident, move |rcell| { rcell.replace((#initializer_func_ident)()); });
+                #df_ident.set_state_tick_hook(#singleton_output_ident, move |rcell| { rcell.replace((#initializer_func_ident)()); });
             });
         }
         let write_iterator = if is_pull {
@@ -124,13 +125,13 @@ pub const FOLD: OperatorConstraints = OperatorConstraints {
                 let #ident = {
                     let mut #accumulator_ident = #context.state_ref(#singleton_output_ident).borrow_mut();
 
-                    #input.for_each(|#iterator_item_ident| {
+                    #work_fn(|| #input.for_each(|#iterator_item_ident| {
                         #iterator_foreach
-                    });
+                    }));
 
                     #[allow(clippy::clone_on_copy)]
                     {
-                        ::std::iter::once(::std::clone::Clone::clone(&*#accumulator_ident))
+                        ::std::iter::once(#work_fn(|| ::std::clone::Clone::clone(&*#accumulator_ident)))
                     }
                 };
             }
