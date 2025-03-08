@@ -1,13 +1,13 @@
-use quote::{quote_spanned, ToTokens};
+use quote::{ToTokens, quote_spanned};
 use syn::parse_quote;
 
 use super::{
     OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance, OperatorWriteOutput,
-    Persistence, WriteContextArgs, RANGE_1,
+    Persistence, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
-/// > 2 input streams of type <(K, V1)> and <(K, V2)>, 1 output stream of type <(K, (V1, V2))>
+/// > 2 input streams of type `<(K, V1)>` and `<(K, V2)>`, 1 output stream of type `<(K, (V1, V2))>`
 ///
 /// Forms the equijoin of the tuples in the input streams by their first (key) attribute. Note that the result nests the 2nd input field (values) into a tuple in the 2nd output field.
 ///
@@ -98,10 +98,12 @@ pub const JOIN: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
+                   loop_id,
                    op_span,
                    ident,
                    inputs,
+                   work_fn,
                    op_inst:
                        OperatorInstance {
                            generics:
@@ -134,43 +136,85 @@ pub const JOIN: OperatorConstraints = OperatorConstraints {
             quote_spanned!(op_span=>)
         };
 
-        let mut make_joindata = |persistence, side| {
+        let mut make_joindata = |persistence, in_loop, side| {
             let joindata_ident = wc.make_ident(format!("joindata_{}", side));
             let borrow_ident = wc.make_ident(format!("joindata_{}_borrow", side));
-            let reset = match persistence {
-                Persistence::Tick => quote_spanned! {op_span=>
-                    #hydroflow.set_state_tick_hook(#joindata_ident, |rcell| #root::util::clear::Clear::clear(rcell.get_mut()));
-                },
-                Persistence::Static => Default::default(),
-                Persistence::Mutable => {
+            let reset = match (in_loop, persistence) {
+                (false, Persistence::None) => {
                     diagnostics.push(Diagnostic::spanned(
                         op_span,
                         Level::Error,
-                        "An implementation of 'mutable does not exist",
+                        "`'none` is not allowed outside of loops, use `'tick` instead.",
+                    ));
+                    return Err(());
+                }
+                (true, Persistence::None) => Default::default(),
+                (false, Persistence::Tick) => quote_spanned! {op_span=>
+                    #df_ident.set_state_tick_hook(#joindata_ident, |rcell| #work_fn(|| #root::util::clear::Clear::clear(rcell.get_mut())));
+                },
+                (true, Persistence::Tick) => Default::default(),
+                (false, Persistence::Static) => Default::default(),
+                (true, Persistence::Static) => {
+                    diagnostics.push(Diagnostic::spanned(
+                        op_span,
+                        Level::Error,
+                        "`'static` is not allowed within loops.",
+                    ));
+                    return Err(());
+                }
+                (_, Persistence::Mutable) => {
+                    diagnostics.push(Diagnostic::spanned(
+                        op_span,
+                        Level::Error,
+                        "An implementation of `'mutable` does not exist.",
                     ));
                     return Err(());
                 }
             };
-            let init = quote_spanned! {op_span=>
-                let #joindata_ident = #hydroflow.add_state(::std::cell::RefCell::new(
-                    #join_type::default()
-                ));
-                #reset
+            let (borrow, init) = if !in_loop {
+                (
+                    quote_spanned! {op_span=>
+                        unsafe {
+                            // SAFETY: handle from `#df_ident.add_state(..)`.
+                            #context.state_ref_unchecked(#joindata_ident)
+                        }.borrow_mut()
+                    },
+                    quote_spanned! {op_span=>
+                        let #joindata_ident = #df_ident.add_state(::std::cell::RefCell::new(
+                            #join_type::default()
+                        ));
+                        #reset
+                    },
+                )
+            } else {
+                (
+                    quote_spanned! {op_span=>
+                        #join_type::default()
+                    },
+                    Default::default(),
+                )
             };
-            Ok((joindata_ident, borrow_ident, init))
+            Ok((borrow, borrow_ident, init))
         };
 
         let persistences = match persistence_args[..] {
-            [] => [Persistence::Tick, Persistence::Tick],
+            [] => {
+                let p = if loop_id.is_some() {
+                    Persistence::None
+                } else {
+                    Persistence::Tick
+                };
+                [p, p]
+            }
             [a] => [a, a],
             [a, b] => [a, b],
             _ => panic!(),
         };
 
-        let (lhs_joindata_ident, lhs_borrow_ident, lhs_init) =
-            make_joindata(persistences[0], "lhs")?;
-        let (rhs_joindata_ident, rhs_borrow_ident, rhs_init) =
-            make_joindata(persistences[1], "rhs")?;
+        let (lhs_borrow, lhs_borrow_ident, lhs_init) =
+            make_joindata(persistences[0], loop_id.is_some(), "lhs")?;
+        let (rhs_borrow, rhs_borrow_ident, rhs_init) =
+            make_joindata(persistences[1], loop_id.is_some(), "rhs")?;
 
         let write_prologue = quote_spanned! {op_span=>
             #lhs_init
@@ -179,31 +223,61 @@ pub const JOIN: OperatorConstraints = OperatorConstraints {
 
         let lhs = &inputs[0];
         let rhs = &inputs[1];
-        let write_iterator = quote_spanned! {op_span=>
-            let mut #lhs_borrow_ident = #context.state_ref(#lhs_joindata_ident).borrow_mut();
-            let mut #rhs_borrow_ident = #context.state_ref(#rhs_joindata_ident).borrow_mut();
-            let #ident = {
-                // Limit error propagation by bounding locally, erasing output iterator type.
-                #[inline(always)]
-                fn check_inputs<'a, K, I1, V1, I2, V2>(
-                    lhs: I1,
-                    rhs: I2,
-                    lhs_state: &'a mut #join_type<K, V1, V2>,
-                    rhs_state: &'a mut #join_type<K, V2, V1>,
-                    is_new_tick: bool,
-                ) -> impl 'a + Iterator<Item = (K, (V1, V2))>
-                where
-                    K: Eq + std::hash::Hash + Clone,
-                    V1: Clone #additional_trait_bounds,
-                    V2: Clone #additional_trait_bounds,
-                    I1: 'a + Iterator<Item = (K, V1)>,
-                    I2: 'a + Iterator<Item = (K, V2)>,
-                {
-                    #root::compiled::pull::symmetric_hash_join_into_iter(lhs, rhs, lhs_state, rhs_state, is_new_tick)
-                }
+        let write_iterator = if loop_id.is_none() {
+            quote_spanned! {op_span=>
+                let mut #lhs_borrow_ident = #lhs_borrow;
+                let mut #rhs_borrow_ident = #rhs_borrow;
+                let #ident = {
+                    // Limit error propagation by bounding locally, erasing output iterator type.
+                    #[inline(always)]
+                    fn check_inputs<'a, K, I1, V1, I2, V2>(
+                        lhs: I1,
+                        rhs: I2,
+                        lhs_state: &'a mut #join_type<K, V1, V2>,
+                        rhs_state: &'a mut #join_type<K, V2, V1>,
+                        is_new_tick: bool,
+                    ) -> impl 'a + Iterator<Item = (K, (V1, V2))>
+                    where
+                        K: Eq + std::hash::Hash + Clone,
+                        V1: Clone #additional_trait_bounds,
+                        V2: Clone #additional_trait_bounds,
+                        I1: 'a + Iterator<Item = (K, V1)>,
+                        I2: 'a + Iterator<Item = (K, V2)>,
+                    {
+                        #work_fn(|| #root::compiled::pull::symmetric_hash_join_into_iter(lhs, rhs, lhs_state, rhs_state, is_new_tick))
+                    }
 
-                check_inputs(#lhs, #rhs, &mut *#lhs_borrow_ident, &mut *#rhs_borrow_ident, #context.is_first_run_this_tick())
-            };
+                    check_inputs(#lhs, #rhs, &mut *#lhs_borrow_ident, &mut *#rhs_borrow_ident, #context.is_first_run_this_tick())
+                };
+            }
+        } else {
+            // TODO(mingwei): deduplicate this code with the above.
+            quote_spanned! {op_span=>
+                let mut #lhs_borrow_ident = ::std::default::Default::default();
+                let mut #rhs_borrow_ident = ::std::default::Default::default();
+                let #ident = {
+                    // Limit error propagation by bounding locally, erasing output iterator type.
+                    #[inline(always)]
+                    fn check_inputs<'a, K, I1, V1, I2, V2>(
+                        lhs: I1,
+                        rhs: I2,
+                        lhs_state: &'a mut #join_type<K, V1, V2>,
+                        rhs_state: &'a mut #join_type<K, V2, V1>,
+                        is_new_tick: bool,
+                    ) -> impl 'a + Iterator<Item = (K, (V1, V2))>
+                    where
+                        K: Eq + std::hash::Hash + Clone,
+                        V1: Clone #additional_trait_bounds,
+                        V2: Clone #additional_trait_bounds,
+                        I1: 'a + Iterator<Item = (K, V1)>,
+                        I2: 'a + Iterator<Item = (K, V2)>,
+                    {
+                        #work_fn(|| #root::compiled::pull::symmetric_hash_join_into_iter(lhs, rhs, lhs_state, rhs_state, is_new_tick))
+                    }
+
+                    check_inputs(#lhs, #rhs, &mut #lhs_borrow_ident, &mut #rhs_borrow_ident, true)
+                };
+            }
         };
 
         let write_iterator_after =

@@ -7,12 +7,12 @@ use std::task::Poll;
 
 use futures::Stream;
 
+use super::SubgraphId;
 use super::context::Context;
 use super::graph::Dfir;
 use super::handoff::{CanReceive, Handoff};
 use super::input::Input;
 use super::port::{RecvCtx, RecvPort, SendCtx, SendPort};
-use super::SubgraphId;
 
 macro_rules! subgraph_ext {
     (
@@ -66,7 +66,7 @@ macro_rules! subgraph_ext {
     };
 }
 
-/// Convenience extension methods for the Hydroflow struct.
+/// Convenience extension methods for the [`Dfir`] struct.
 pub trait GraphExt {
     subgraph_ext!(add_subgraph_sink, (recv_port: R), ());
     subgraph_ext!(add_subgraph_2sink, (recv_port_1: R1, recv_port_2: R2), ());

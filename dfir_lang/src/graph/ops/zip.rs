@@ -2,8 +2,8 @@ use quote::quote_spanned;
 use syn::parse_quote;
 
 use super::{
-    OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
-    OperatorWriteOutput, Persistence, WriteContextArgs, RANGE_0, RANGE_1,
+    OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance, OperatorWriteOutput,
+    Persistence, WriteContextArgs, RANGE_0, RANGE_1,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -37,7 +37,7 @@ pub const ZIP: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    is_pull,
@@ -73,7 +73,7 @@ pub const ZIP: OperatorConstraints = OperatorConstraints {
         let zipbuf_ident = wc.make_ident("zipbuf");
 
         let write_prologue = quote_spanned! {op_span=>
-            let #zipbuf_ident = #hydroflow.add_state(::std::cell::RefCell::new(
+            let #zipbuf_ident = #df_ident.add_state(::std::cell::RefCell::new(
                 #root::util::monotonic_map::MonotonicMap::<
                     #root::scheduled::ticks::TickInstant,
                     (::std::vec::Vec<_>, ::std::vec::Vec<_>),
@@ -86,8 +86,11 @@ pub const ZIP: OperatorConstraints = OperatorConstraints {
         let write_iterator = quote_spanned! {op_span=>
             let #ident = {
                 // TODO(mingwei): performance issue - get_mut_default and std::mem::take reset the vecs, reallocs heap.
-                let mut zipbuf_borrow = #context.state_ref(#zipbuf_ident).borrow_mut();
-                let (ref mut lhs_buf, ref mut rhs_buf) = zipbuf_borrow.get_mut_default(#context.current_tick());
+                let mut zipbuf_borrow = unsafe {
+                    // SAFETY: handle from `#df_ident.add_state(..)`.
+                    #context.state_ref_unchecked(#zipbuf_ident)
+                }.borrow_mut();
+                let (lhs_buf, rhs_buf) = zipbuf_borrow.get_mut_default(#context.current_tick());
                 #root::itertools::Itertools::zip_longest(
                     ::std::mem::take(lhs_buf).into_iter().chain(#lhs),
                     ::std::mem::take(rhs_buf).into_iter().chain(#rhs),
@@ -96,8 +99,11 @@ pub const ZIP: OperatorConstraints = OperatorConstraints {
                         if let #root::itertools::EitherOrBoth::Both(lhs, rhs) = either {
                             Some((lhs, rhs))
                         } else {
-                            let mut zipbuf_burrow = #context.state_ref(#zipbuf_ident).borrow_mut();
-                            let (ref mut lhs_buf, ref mut rhs_buf) = zipbuf_burrow.get_mut_default(#context.current_tick());
+                            let mut zipbuf_burrow = unsafe {
+                                // SAFETY: handle from `#df_ident.add_state(..)`.
+                                #context.state_ref_unchecked(#zipbuf_ident)
+                            }.borrow_mut();
+                            let (lhs_buf, rhs_buf) = zipbuf_burrow.get_mut_default(#context.current_tick());
                             match either {
                                 #root::itertools::EitherOrBoth::Left(lhs) => lhs_buf.push(lhs),
                                 #root::itertools::EitherOrBoth::Right(rhs) => rhs_buf.push(rhs),

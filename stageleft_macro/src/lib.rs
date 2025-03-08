@@ -1,5 +1,5 @@
 use proc_macro2::{Punct, Spacing, Span, TokenStream};
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{ToTokens, quote, quote_spanned};
 use sha2::{Digest, Sha256};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -137,22 +137,6 @@ pub fn quse_fn(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     .into()
 }
 
-/// Marks a chunk of code as being runtime-only, which means that no staged code in its crate can depend on it.
-/// Code behind this attribute is allowed to use staged entrypoints defined in the same crate.
-#[proc_macro_attribute]
-pub fn runtime(
-    _attr: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    // TODO(shadaj): when this is used for a struct, emit two versions:
-    // one that is runtime-only with public fields and one that is staged-only without
-    let input: TokenStream = input.into();
-    proc_macro::TokenStream::from(quote! {
-        #[cfg(not(stageleft_macro))]
-        #input
-    })
-}
-
 /// A utility for declaring top-level public modules in a Stageleft crate that exports macros.
 ///
 /// This gets around errors in compiling the macro crate when there
@@ -226,6 +210,9 @@ pub fn entry(
         syn::parse_macro_input!(attr with Punctuated<Type, Token![,]>::parse_terminated);
 
     let mut input = syn::parse_macro_input!(input as syn::ItemFn);
+    let input_visibility = input.vis.clone();
+    input.vis = syn::Visibility::Inherited; // normalize pub
+
     let input_name = &input.sig.ident;
 
     let input_generics = &input.sig.generics;
@@ -263,7 +250,7 @@ pub fn entry(
                     runtime_data_params.push(quote! {
                         #pat: #runtime_tpe
                     });
-                    runtime_data_locals.push(quote!(##pat));
+                    runtime_data_locals.push(quote!(# #pat));
 
                     out.push(quote_spanned! {input.span()=>
                         let #pat: &#root::internal::syn::Expr = &input_parsed[#i];
@@ -340,11 +327,11 @@ pub fn entry(
         .chars()
         .filter(|c| c.is_alphanumeric())
         .collect::<String>();
+
     let input_hash = "macro_".to_string() + &format!("{:X}", Sha256::digest(input_contents));
     let input_hash_ident = syn::Ident::new(&input_hash, Span::call_site());
     let input_hash_impl_ident = syn::Ident::new(&(input_hash + "_impl"), Span::call_site());
 
-    let input_visibility = input.vis.clone();
     input.vis = syn::parse_quote!(pub(crate));
 
     proc_macro::TokenStream::from(quote_spanned! {input.span()=>

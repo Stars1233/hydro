@@ -48,7 +48,7 @@ pub const _LATTICE_FOLD_BATCH: OperatorConstraints = OperatorConstraints {
     input_delaytype_fn: |_| Some(DelayType::MonotoneAccum),
     write_fn: |wc @ &WriteContextArgs {
                    context,
-                   hydroflow,
+                   df_ident,
                    ident,
                    op_span,
                    root,
@@ -72,7 +72,7 @@ pub const _LATTICE_FOLD_BATCH: OperatorConstraints = OperatorConstraints {
         let lattice_ident = wc.make_ident("lattice");
 
         let write_prologue = quote_spanned! {op_span=>
-            let #lattice_ident = #hydroflow.add_state(::std::cell::RefCell::new(<#lattice_type as ::std::default::Default>::default()));
+            let #lattice_ident = #df_ident.add_state(::std::cell::RefCell::new(<#lattice_type as ::std::default::Default>::default()));
         };
 
         let input = &inputs[0];
@@ -82,7 +82,10 @@ pub const _LATTICE_FOLD_BATCH: OperatorConstraints = OperatorConstraints {
             quote_spanned! {op_span=>
 
                 {
-                    let mut __lattice = #context.state_ref(#lattice_ident).borrow_mut();
+                    let mut __lattice = unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        #context.state_ref_unchecked(#lattice_ident)
+                    }.borrow_mut();
 
                     for __item in #input {
                         #root::lattices::Merge::merge(&mut *__lattice, __item);
@@ -90,7 +93,10 @@ pub const _LATTICE_FOLD_BATCH: OperatorConstraints = OperatorConstraints {
                 }
 
                 let #ident = if #signal.count() > 0 {
-                    ::std::option::Option::Some(#context.state_ref(#lattice_ident).take())
+                    ::std::option::Option::Some(unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        #context.state_ref_unchecked(#lattice_ident)
+                    }.take())
                 } else {
                     ::std::option::Option::None
                 }.into_iter();

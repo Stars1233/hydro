@@ -1,4 +1,4 @@
-//! Hydroflow's operators
+//! DFIR's operators
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -10,10 +10,11 @@ use quote::quote_spanned;
 use serde::{Deserialize, Serialize};
 use slotmap::Key;
 use syn::punctuated::Punctuated;
-use syn::{parse_quote_spanned, Expr, Token};
+use syn::{Expr, Token, parse_quote_spanned};
 
 use super::{
-    GraphNode, GraphNodeId, GraphSubgraphId, OpInstGenerics, OperatorInstance, PortIndexValue,
+    GraphLoopId, GraphNode, GraphNodeId, GraphSubgraphId, OpInstGenerics, OperatorInstance,
+    PortIndexValue,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parse::{Operator, PortIndex};
@@ -235,13 +236,14 @@ pub const NULL_WRITE_FN: WriteFn = |write_context_args, _| {
 macro_rules! declare_ops {
     ( $( $mod:ident :: $op:ident, )* ) => {
         $( pub(crate) mod $mod; )*
-        /// All Hydroflow operators.
+        /// All DFIR operators.
         pub const OPERATORS: &[OperatorConstraints] = &[
             $( $mod :: $op, )*
         ];
     };
 }
 declare_ops![
+    all_iterations::ALL_ITERATIONS,
     all_once::ALL_ONCE,
     anti_join::ANTI_JOIN,
     anti_join_multiset::ANTI_JOIN_MULTISET,
@@ -249,6 +251,7 @@ declare_ops![
     assert_eq::ASSERT_EQ,
     batch::BATCH,
     chain::CHAIN,
+    _counter::_COUNTER,
     cross_join::CROSS_JOIN,
     cross_join_multiset::CROSS_JOIN_MULTISET,
     cross_singleton::CROSS_SINGLETON,
@@ -276,6 +279,8 @@ declare_ops![
     join_multiset::JOIN_MULTISET,
     fold_keyed::FOLD_KEYED,
     reduce_keyed::REDUCE_KEYED,
+    repeat_n::REPEAT_N,
+    // last_iteration::LAST_ITERATION,
     lattice_bimorphism::LATTICE_BIMORPHISM,
     _lattice_fold_batch::_LATTICE_FOLD_BATCH,
     lattice_fold::LATTICE_FOLD,
@@ -284,6 +289,7 @@ declare_ops![
     map::MAP,
     union::UNION,
     multiset_delta::MULTISET_DELTA,
+    next_iteration::NEXT_ITERATION,
     next_stratum::NEXT_STRATUM,
     defer_signal::DEFER_SIGNAL,
     defer_tick::DEFER_TICK,
@@ -293,6 +299,7 @@ declare_ops![
     persist::PERSIST,
     persist_mut::PERSIST_MUT,
     persist_mut_keyed::PERSIST_MUT_KEYED,
+    prefix::PREFIX,
     py_udf::PY_UDF,
     reduce::REDUCE,
     spin::SPIN,
@@ -345,13 +352,19 @@ pub struct WriteContextArgs<'a> {
     /// `df` ident, the name of the
     /// [`dfir_rs::scheduled::graph::Dfir`](https://hydro.run/rustdoc/dfir_rs/scheduled/graph/struct.Dfir.html)
     /// instance.
-    pub hydroflow: &'a Ident,
+    pub df_ident: &'a Ident,
     /// Subgraph ID in which this operator is contained.
     pub subgraph_id: GraphSubgraphId,
     /// Node ID identifying this operator in the flat or partitioned graph meta-datastructure.
     pub node_id: GraphNodeId,
+    /// Loop ID in which this operator is contained, or `None` if not in a loop.
+    pub loop_id: Option<GraphLoopId>,
     /// The source span of this operator.
     pub op_span: Span,
+    /// Tag for this operator appended to the generated identifier.
+    pub op_tag: Option<String>,
+    /// Identifier for a function to call when doing work outside the iterator.
+    pub work_fn: &'a Ident,
 
     /// Ident the iterator or pullerator should be assigned to.
     pub ident: &'a Ident,
@@ -464,6 +477,8 @@ where
 /// Persistence lifetimes: `'tick`, `'static`, or `'mutable`.
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Persistence {
+    /// No persistence, for within a loop iteration.
+    None,
     /// Persistence for one tick at-a-time only.
     Tick,
     /// Persistene across all ticks.
@@ -474,7 +489,10 @@ pub enum Persistence {
 
 /// Helper which creates a error message string literal for when the Tokio runtime is not found.
 fn make_missing_runtime_msg(op_name: &str) -> Literal {
-    Literal::string(&format!("`{}()` must be used within a Tokio runtime. For example, use `#[dfir_rs::main]` on your main method.", op_name))
+    Literal::string(&format!(
+        "`{}()` must be used within a Tokio runtime. For example, use `#[dfir_rs::main]` on your main method.",
+        op_name
+    ))
 }
 
 /// Operator categories, for docs.
@@ -561,4 +579,6 @@ pub enum FloType {
     Windowing,
     /// An un-windowing operator, for moving data out of a loop context.
     Unwindowing,
+    /// Moves data into the next loop iteration within a loop context.
+    NextIteration,
 }

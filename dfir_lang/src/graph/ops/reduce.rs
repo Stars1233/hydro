@@ -1,8 +1,8 @@
 use quote::quote_spanned;
 
 use super::{
-    DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints,
-    OperatorInstance, OperatorWriteOutput, Persistence, WriteContextArgs, RANGE_0, RANGE_1,
+    DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
+    OperatorWriteOutput, Persistence, RANGE_0, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -50,12 +50,13 @@ pub const REDUCE: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    inputs,
                    is_pull,
                    singleton_output_ident,
+                   work_fn,
                    op_inst:
                        OperatorInstance {
                            generics:
@@ -104,30 +105,33 @@ pub const REDUCE: OperatorConstraints = OperatorConstraints {
 
         let mut write_prologue = quote_spanned! {op_span=>
             #[allow(clippy::redundant_closure_call)]
-            let #singleton_output_ident = #hydroflow.add_state(
+            let #singleton_output_ident = #df_ident.add_state(
                 ::std::cell::RefCell::new(::std::option::Option::None)
             );
         };
         if Persistence::Tick == persistence {
             write_prologue.extend(quote_spanned! {op_span=>
                 // Reset the value to the initializer fn at the end of each tick.
-                #hydroflow.set_state_tick_hook(#singleton_output_ident, |rcell| { rcell.take(); });
+                #df_ident.set_state_tick_hook(#singleton_output_ident, |rcell| { rcell.take(); });
             });
         }
 
         let write_iterator = if is_pull {
-        let input = &inputs[0];
+            let input = &inputs[0];
             quote_spanned! {op_span=>
                 let #ident = {
-                    let mut #accumulator_ident = #context.state_ref(#singleton_output_ident).borrow_mut();
+                    let mut #accumulator_ident = unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        #context.state_ref_unchecked(#singleton_output_ident)
+                    }.borrow_mut();
 
-                    #input.for_each(|#iterator_item_ident| {
+                    #work_fn(|| #input.for_each(|#iterator_item_ident| {
                         #iterator_foreach
-                    });
+                    }));
 
                     #[allow(clippy::clone_on_copy)]
                     {
-                        ::std::iter::IntoIterator::into_iter(::std::clone::Clone::clone(&*#accumulator_ident))
+                        ::std::iter::IntoIterator::into_iter(#work_fn(|| ::std::clone::Clone::clone(&*#accumulator_ident)))
                     }
                 };
             }
@@ -136,7 +140,10 @@ pub const REDUCE: OperatorConstraints = OperatorConstraints {
             quote_spanned! {op_span=>
                 let #ident = {
                     #root::pusherator::for_each::ForEach::new(|#iterator_item_ident| {
-                        let mut #accumulator_ident = #context.state_ref(#singleton_output_ident).borrow_mut();
+                        let mut #accumulator_ident = unsafe {
+                            // SAFETY: handle from `#df_ident.add_state(..)`.
+                            #context.state_ref_unchecked(#singleton_output_ident)
+                        }.borrow_mut();
                         #iterator_foreach
                     })
                 };

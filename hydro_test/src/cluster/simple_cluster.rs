@@ -1,4 +1,25 @@
 use hydro_lang::*;
+use hydro_std::compartmentalize::{DecoupleClusterStream, DecoupleProcessStream, PartitionStream};
+use stageleft::IntoQuotedMut;
+
+pub fn partition<'a, F: Fn((ClusterId<()>, String)) -> (ClusterId<()>, String) + 'a>(
+    cluster1: Cluster<'a, ()>,
+    cluster2: Cluster<'a, ()>,
+    dist_policy: impl IntoQuotedMut<'a, F, Cluster<'a, ()>>,
+) -> (Cluster<'a, ()>, Cluster<'a, ()>) {
+    cluster1
+        .source_iter(q!(vec!(CLUSTER_SELF_ID)))
+        .map(q!(move |id| (
+            ClusterId::<()>::from_raw(id.raw_id),
+            format!("Hello from {}", id.raw_id)
+        )))
+        .send_partitioned(&cluster2, dist_policy)
+        .for_each(q!(move |message| println!(
+            "My self id is {}, my message is {:?}",
+            CLUSTER_SELF_ID.raw_id, message
+        )));
+    (cluster1, cluster2)
+}
 
 pub fn decouple_cluster<'a>(flow: &FlowBuilder<'a>) -> (Cluster<'a, ()>, Cluster<'a, ()>) {
     let cluster1 = flow.cluster();
@@ -47,8 +68,14 @@ pub fn simple_cluster<'a>(flow: &FlowBuilder<'a>) -> (Process<'a, ()>, Cluster<'
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use hydro_deploy::Deployment;
-    use hydro_lang::deploy::DeployCrateWrapper;
+    use hydro_lang::deploy::{DeployCrateWrapper, DeployRuntime};
+    use hydro_lang::rewrites::partitioner::{self, PartitionAttribute, Partitioner};
+    use hydro_lang::rewrites::{insert_counter, persist_pullup};
+    use hydro_lang::{ClusterId, Location};
+    use stageleft::{RuntimeData, q};
 
     #[tokio::test]
     async fn simple_cluster() {
@@ -83,7 +110,10 @@ mod tests {
             for j in 0..5 {
                 assert_eq!(
                     stdout.recv().await.unwrap(),
-                    format!("cluster received: (ClusterId::<()>({}), {}) (self cluster id: ClusterId::<()>({}))", i, j, i)
+                    format!(
+                        "cluster received: (ClusterId::<()>({}), {}) (self cluster id: ClusterId::<()>({}))",
+                        i, j, i
+                    )
                 );
             }
         }
@@ -163,6 +193,98 @@ mod tests {
                 );
                 assert_eq!(stdout.recv().await.unwrap(), expected_message);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn partition() {
+        let mut deployment = Deployment::new();
+
+        let num_nodes = 3;
+        let num_partitions = 2;
+        let builder = hydro_lang::FlowBuilder::new();
+        let (cluster1, cluster2) = super::partition(
+            builder.cluster::<()>(),
+            builder.cluster::<()>(),
+            q!(move |(id, msg)| (
+                ClusterId::<()>::from_raw(id.raw_id * num_partitions as u32),
+                msg
+            )),
+        );
+        let built = builder.with_default_optimize();
+
+        let nodes = built
+            .with_cluster(&cluster1, (0..num_nodes).map(|_| deployment.Localhost()))
+            .with_cluster(
+                &cluster2,
+                (0..num_nodes * num_partitions).map(|_| deployment.Localhost()),
+            )
+            .deploy(&mut deployment);
+
+        deployment.deploy().await.unwrap();
+
+        let cluster2_stdouts = futures::future::join_all(
+            nodes
+                .get_cluster(&cluster2)
+                .members()
+                .iter()
+                .map(|node| node.stdout()),
+        )
+        .await;
+
+        deployment.start().await.unwrap();
+
+        for (cluster2_id, mut stdout) in cluster2_stdouts.into_iter().enumerate() {
+            if cluster2_id % num_partitions == 0 {
+                let expected_message = format!(
+                    r#"My self id is {}, my message is "Hello from {}""#,
+                    cluster2_id,
+                    cluster2_id / num_partitions
+                );
+                assert_eq!(stdout.recv().await.unwrap(), expected_message);
+            }
+        }
+    }
+
+    #[test]
+    fn partitioned_simple_cluster_ir() {
+        let builder = hydro_lang::FlowBuilder::new();
+        let (_, cluster) = super::simple_cluster(&builder);
+        let partitioner = Partitioner {
+            nodes_to_partition: HashMap::from([(5, PartitionAttribute::TupleIndex(1))]),
+            num_partitions: 3,
+            partitioned_cluster_id: cluster.id().raw_id(),
+        };
+        let built = builder
+            .optimize_with(persist_pullup::persist_pullup)
+            .optimize_with(|leaves| partitioner::partition(leaves, &partitioner))
+            .into_deploy::<DeployRuntime>();
+
+        insta::assert_debug_snapshot!(built.ir());
+
+        for (id, ir) in built.compile(&RuntimeData::new("FAKE")).all_dfir() {
+            insta::with_settings!({snapshot_suffix => format!("surface_graph_{id}")}, {
+                insta::assert_snapshot!(ir.surface_syntax_string());
+            });
+        }
+    }
+
+    #[test]
+    fn counter_simple_cluster_ir() {
+        let builder = hydro_lang::FlowBuilder::new();
+        let _ = super::simple_cluster(&builder);
+        let counter_output_duration = q!(std::time::Duration::from_secs(1));
+        let built = builder
+            .optimize_with(persist_pullup::persist_pullup)
+            .optimize_with(|leaves| insert_counter::insert_counter(leaves, counter_output_duration))
+            .into_deploy::<DeployRuntime>();
+
+        insta::assert_debug_snapshot!(built.ir());
+
+        for (id, ir) in built.compile(&RuntimeData::new("FAKE")).all_dfir() {
+            insta::with_settings!({snapshot_suffix => format!("surface_graph_{id}")}, {
+                insta::assert_snapshot!(ir.surface_syntax_string());
+            });
         }
     }
 }

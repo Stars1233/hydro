@@ -5,28 +5,31 @@ use std::pin::Pin;
 use dfir_lang::graph::DfirGraph;
 use dfir_rs::bytes::Bytes;
 use dfir_rs::futures::{Sink, Stream};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use stageleft::QuotedWithContext;
 
 pub mod macro_runtime;
 pub use macro_runtime::*;
 
 #[cfg(feature = "deploy")]
+#[cfg(stageleft_runtime)]
 pub(crate) mod trybuild;
 
-// TODO(shadaj): has to be public due to stageleft limitations
 #[cfg(feature = "deploy")]
-#[doc(hidden)]
-pub mod trybuild_rewriters;
+#[cfg(stageleft_runtime)]
+mod trybuild_rewriters;
 
 #[cfg(feature = "deploy")]
+#[cfg(stageleft_runtime)]
 pub use trybuild::init_test;
 
 #[cfg(feature = "deploy")]
+#[cfg(stageleft_runtime)]
 pub mod deploy_graph;
 
 #[cfg(feature = "deploy")]
+#[cfg(stageleft_runtime)]
 pub use deploy_graph::*;
 
 pub mod in_memory_graph;
@@ -49,6 +52,10 @@ pub trait LocalDeploy<'a> {
 
     fn trivial_cluster(_id: usize) -> Self::Cluster {
         panic!("No trivial cluster")
+    }
+
+    fn trivial_external(_id: usize) -> Self::ExternalProcess {
+        panic!("No trivial external")
     }
 }
 
@@ -175,14 +182,14 @@ pub trait Deploy<'a> {
 }
 
 impl<
-        'a,
-        T: Deploy<'a, Process = N, Cluster = C, ExternalProcess = E, Meta = M, GraphId = R>,
-        N: Node<Meta = M>,
-        C: Node<Meta = M>,
-        E: Node<Meta = M>,
-        M: Default,
-        R,
-    > LocalDeploy<'a> for T
+    'a,
+    T: Deploy<'a, Process = N, Cluster = C, ExternalProcess = E, Meta = M, GraphId = R>,
+    N: Node<Meta = M>,
+    C: Node<Meta = M>,
+    E: Node<Meta = M>,
+    M: Default,
+    R,
+> LocalDeploy<'a> for T
 {
     type Process = N;
     type Cluster = C;

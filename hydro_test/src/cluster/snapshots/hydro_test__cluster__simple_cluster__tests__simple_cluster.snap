@@ -6,16 +6,13 @@ expression: built.ir()
     ForEach {
         f: stageleft :: runtime_support :: fn1_type_hint :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32)) , () > ({ use crate :: __staged :: cluster :: simple_cluster :: * ; | (id , d) | println ! ("node received: ({}, {:?})" , id , d) }),
         input: Network {
-            from_location: Cluster(
-                1,
-            ),
             from_key: None,
             to_location: Process(
                 0,
             ),
             to_key: None,
             serialize_fn: Some(
-                | data | { hydro_lang :: runtime_support :: bincode :: serialize :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32) > (& data) . unwrap () . into () },
+                :: hydro_lang :: runtime_support :: stageleft :: runtime_support :: fn1_type_hint :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32) , _ > (| data | { hydro_lang :: runtime_support :: bincode :: serialize (& data) . unwrap () . into () }),
             ),
             instantiate_fn: <network instantiate>,
             deserialize_fn: Some(
@@ -24,16 +21,13 @@ expression: built.ir()
             input: Inspect {
                 f: stageleft :: runtime_support :: fn1_borrow_type_hint :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32) , () > ({ use crate :: __staged :: cluster :: simple_cluster :: * ; let CLUSTER_SELF_ID__free = hydro_lang :: ClusterId :: < () > :: from_raw (__hydro_lang_cluster_self_id_1) ; move | n | println ! ("cluster received: {:?} (self cluster id: {})" , n , CLUSTER_SELF_ID__free) }),
                 input: Network {
-                    from_location: Process(
-                        0,
-                    ),
                     from_key: None,
                     to_location: Cluster(
                         1,
                     ),
                     to_key: None,
                     serialize_fn: Some(
-                        | (id , data) : (hydro_lang :: ClusterId < _ > , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32)) | { (id . raw_id , hydro_lang :: runtime_support :: bincode :: serialize :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32) > (& data) . unwrap () . into ()) },
+                        :: hydro_lang :: runtime_support :: stageleft :: runtime_support :: fn1_type_hint :: < (hydro_lang :: ClusterId < _ > , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32)) , _ > (| (id , data) | { (id . raw_id , hydro_lang :: runtime_support :: bincode :: serialize (& data) . unwrap () . into ()) }),
                     ),
                     instantiate_fn: <network instantiate>,
                     deserialize_fn: Some(
@@ -41,10 +35,10 @@ expression: built.ir()
                     ),
                     input: Map {
                         f: stageleft :: runtime_support :: fn1_type_hint :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32) , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32)) > ({ use crate :: __staged :: cluster :: simple_cluster :: * ; | (id , n) | (id , (id , n)) }),
-                        input: Delta(
-                            CrossProduct(
-                                Persist(
-                                    Map {
+                        input: Delta {
+                            inner: CrossProduct {
+                                left: Persist {
+                                    inner: Map {
                                         f: stageleft :: runtime_support :: fn1_type_hint :: < & hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > > ({ use crate :: __staged :: cluster :: simple_cluster :: * ; | & id | id }),
                                         input: Source {
                                             source: Iter(
@@ -53,24 +47,144 @@ expression: built.ir()
                                             location_kind: Process(
                                                 0,
                                             ),
+                                            metadata: HydroIrMetadata {
+                                                location_kind: Process(
+                                                    0,
+                                                ),
+                                                output_type: Some(
+                                                    & hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () >,
+                                                ),
+                                                cardinality: None,
+                                                cpu_usage: None,
+                                            },
+                                        },
+                                        metadata: HydroIrMetadata {
+                                            location_kind: Process(
+                                                0,
+                                            ),
+                                            output_type: Some(
+                                                hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () >,
+                                            ),
+                                            cardinality: None,
+                                            cpu_usage: None,
                                         },
                                     },
-                                ),
-                                Persist(
-                                    Source {
+                                    metadata: HydroIrMetadata {
+                                        location_kind: Process(
+                                            0,
+                                        ),
+                                        output_type: Some(
+                                            hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () >,
+                                        ),
+                                        cardinality: None,
+                                        cpu_usage: None,
+                                    },
+                                },
+                                right: Persist {
+                                    inner: Source {
                                         source: Iter(
                                             { use crate :: __staged :: cluster :: simple_cluster :: * ; 0 .. 5 },
                                         ),
                                         location_kind: Process(
                                             0,
                                         ),
+                                        metadata: HydroIrMetadata {
+                                            location_kind: Process(
+                                                0,
+                                            ),
+                                            output_type: Some(
+                                                i32,
+                                            ),
+                                            cardinality: None,
+                                            cpu_usage: None,
+                                        },
                                     },
+                                    metadata: HydroIrMetadata {
+                                        location_kind: Process(
+                                            0,
+                                        ),
+                                        output_type: Some(
+                                            i32,
+                                        ),
+                                        cardinality: None,
+                                        cpu_usage: None,
+                                    },
+                                },
+                                metadata: HydroIrMetadata {
+                                    location_kind: Process(
+                                        0,
+                                    ),
+                                    output_type: Some(
+                                        (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32),
+                                    ),
+                                    cardinality: None,
+                                    cpu_usage: None,
+                                },
+                            },
+                            metadata: HydroIrMetadata {
+                                location_kind: Process(
+                                    0,
                                 ),
+                                output_type: Some(
+                                    (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32),
+                                ),
+                                cardinality: None,
+                                cpu_usage: None,
+                            },
+                        },
+                        metadata: HydroIrMetadata {
+                            location_kind: Process(
+                                0,
                             ),
+                            output_type: Some(
+                                (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32)),
+                            ),
+                            cardinality: None,
+                            cpu_usage: None,
+                        },
+                    },
+                    metadata: HydroIrMetadata {
+                        location_kind: Cluster(
+                            1,
                         ),
+                        output_type: Some(
+                            (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32),
+                        ),
+                        cardinality: None,
+                        cpu_usage: None,
                     },
                 },
+                metadata: HydroIrMetadata {
+                    location_kind: Cluster(
+                        1,
+                    ),
+                    output_type: Some(
+                        (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32),
+                    ),
+                    cardinality: None,
+                    cpu_usage: None,
+                },
             },
+            metadata: HydroIrMetadata {
+                location_kind: Process(
+                    0,
+                ),
+                output_type: Some(
+                    (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32),
+                ),
+                cardinality: None,
+                cpu_usage: None,
+            },
+        },
+        metadata: HydroIrMetadata {
+            location_kind: Process(
+                0,
+            ),
+            output_type: Some(
+                (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < () > , i32)),
+            ),
+            cardinality: None,
+            cpu_usage: None,
         },
     },
 ]

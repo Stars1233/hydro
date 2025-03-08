@@ -1,15 +1,13 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-use dfir_rs::compiled::pull::JoinState;
-use dfir_rs::compiled::pull::SymmetricHashJoin;
+use dfir_rs::compiled::pull::{JoinState, SymmetricHashJoin};
 use dfir_rs::lang::collections::Iter;
 use dfir_rs::pusherator::{InputBuild, IteratorToPusherator, PusheratorBuild};
 use dfir_rs::scheduled::graph::Dfir;
 use dfir_rs::scheduled::graph_ext::GraphExt;
 use dfir_rs::scheduled::handoff::VecHandoff;
 use dfir_rs::var_expr;
-
 use rand::Rng;
 
 mod people;
@@ -23,7 +21,7 @@ fn main() {
     type Phone = &'static str;
     type DateTime = usize;
 
-    let mut df = Hydroflow::new();
+    let mut df = Dfir::new();
 
     let (contacts_send, contacts_recv) =
         df.make_edge::<_, VecHandoff<(Pid, Pid, DateTime)>>("contacts");

@@ -12,20 +12,20 @@ use dfir_rs::scheduled::graph::Dfir;
 use lattices::set_union::SetUnion;
 use lattices::{IsTop, Max, Pair};
 use lazy_static::lazy_static;
-use prometheus::{register_int_counter, IntCounter};
+use prometheus::{IntCounter, register_int_counter};
 use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tracing::{info, trace};
 
+use crate::GossipMessage::{Ack, Nack};
 use crate::lattices::BoundedSetLattice;
 use crate::membership::{MemberData, MemberId};
 use crate::model::{
-    delete_row, upsert_row, Clock, NamespaceMap, Namespaces, RowKey, RowValue, TableMap, TableName,
+    Clock, NamespaceMap, Namespaces, RowKey, RowValue, TableMap, TableName, delete_row, upsert_row,
 };
 use crate::util::{ClientRequestWithAddress, GossipRequestWithAddress};
-use crate::GossipMessage::{Ack, Nack};
 use crate::{ClientRequest, ClientResponse, GossipMessage, Key, Namespace};
 
 /// A trait that represents an abstract network address. In production, this will typically be
@@ -55,7 +55,7 @@ lazy_static! {
         register_int_counter!("sets", "Counts the number of SET requests processed.").unwrap();
 }
 
-/// Creates a L0 key-value store server using Hydroflow.
+/// Creates a L0 key-value store server using DFIR.
 ///
 /// # Arguments
 /// -- `client_inputs`: The input stream of client requests for the client protocol.
@@ -105,7 +105,7 @@ where
     dfir_syntax! {
 
         on_start = initialize() -> tee();
-        on_start -> for_each(|_| info!("{:?}: Transducer {} started.", context.current_tick(), member_id_6));
+        on_start -> for_each(|_| info!("{:?}: Process {} started.", context.current_tick(), member_id_6));
 
         seed_nodes = source_stream(seed_node_stream)
             -> fold::<'static>(|| Box::new(seed_nodes), |last_seed_nodes, new_seed_nodes: Vec<SeedNode<Addr>>| {
@@ -274,7 +274,7 @@ where
         new_writes -> for_each(|x| trace!("NEW WRITE: {:?}", x));
 
         // Step 1: Put the new writes in a map, with the write as the key and a SetBoundedLattice as the value.
-        infecting_writes = union() -> state::<'static, MapUnionHashMap<MessageId, InfectingWrite>>();
+        infecting_writes = union() -> state_by::<'static, MapUnionHashMap<MessageId, InfectingWrite>>(std::convert::identity, std::default::Default::default);
 
         new_writes -> map(|write| {
             // Ideally, the write itself is the key, but writes are a hashmap and hashmaps don't
