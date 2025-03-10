@@ -43,7 +43,7 @@ pub const ASSERT_EQ: OperatorConstraints = OperatorConstraints {
     input_delaytype_fn: |_| None,
     write_fn: |wc @ &WriteContextArgs {
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    arguments,
                    ..
@@ -54,15 +54,18 @@ pub const ASSERT_EQ: OperatorConstraints = OperatorConstraints {
         let arg = &arguments[0];
 
         let inspect_fn = parse_quote_spanned! {op_span=>
-            |__item| {
+            |item| {
                 // This is to help constrain the types so that type inference works nicely.
                 fn __constrain_types<T>(array: &impl ::std::ops::Index<usize, Output = T>, index: usize) -> &T {
                     &array[index]
                 }
 
-                let __index = #context.state_ref(#assert_index_ident).get();
-                ::std::assert_eq!(__constrain_types(&#arg, __index), __item, "Item (right) at index {} does not equal expected (left).", __index);
-                #context.state_ref(#assert_index_ident).set(__index + 1);
+                unsafe {
+                    // SAFETY: handle from `#df_ident.add_state(..)`.
+                    let index = #context.state_ref_unchecked(#assert_index_ident).get();
+                    ::std::assert_eq!(__constrain_types(&#arg, index), item, "Item (right) at index {} does not equal expected (left).", index);
+                    #context.state_ref_unchecked(#assert_index_ident).set(index + 1);
+                };
             }
         };
 
@@ -75,7 +78,7 @@ pub const ASSERT_EQ: OperatorConstraints = OperatorConstraints {
 
         let write_prologue = owo.write_prologue;
         owo.write_prologue = quote_spanned! {op_span=>
-            let #assert_index_ident = #hydroflow.add_state(
+            let #assert_index_ident = #df_ident.add_state(
                 ::std::cell::Cell::new(0usize)
             );
 

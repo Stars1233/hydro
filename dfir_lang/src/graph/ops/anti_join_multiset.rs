@@ -1,9 +1,9 @@
-use quote::{quote_spanned, ToTokens};
+use quote::{ToTokens, quote_spanned};
 use syn::parse_quote;
 
 use super::{
     DelayType, OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
-    OperatorWriteOutput, Persistence, PortIndexValue, WriteContextArgs, RANGE_0, RANGE_1,
+    OperatorWriteOutput, Persistence, PortIndexValue, RANGE_0, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -49,10 +49,11 @@ pub const ANTI_JOIN_MULTISET: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    inputs,
+                   work_fn,
                    op_inst:
                        OperatorInstance {
                            generics:
@@ -75,7 +76,7 @@ pub const ANTI_JOIN_MULTISET: OperatorConstraints = OperatorConstraints {
             let antijoindata_ident = wc.make_ident(format!("antijoindata_{}", side));
             let borrow_ident = wc.make_ident(format!("antijoindata_{}_borrow", side));
             let (init, borrow) = match persistence {
-                Persistence::Tick => (
+                Persistence::None | Persistence::Tick => (
                     quote_spanned! {op_span=>
                         #root::util::monotonic_map::MonotonicMap::<_, #root::rustc_hash::FxHashSet<_>>::default()
                     },
@@ -110,11 +111,19 @@ pub const ANTI_JOIN_MULTISET: OperatorConstraints = OperatorConstraints {
         let pos_antijoindata_ident = wc.make_ident("antijoindata_pos_ident");
         let pos_borrow_ident = wc.make_ident("antijoindata_pos_borrow_ident");
 
-        let write_prologue_pos = match persistences[0] {
-            Persistence::Tick => quote_spanned! {op_span=>},
+        let write_prologue = match persistences[0] {
+            Persistence::None => Default::default(),
+            Persistence::Tick => quote_spanned! {op_span=>
+                let #neg_antijoindata_ident = #df_ident.add_state(std::cell::RefCell::new(
+                    #neg_init
+                ));
+            },
             Persistence::Static => quote_spanned! {op_span=>
-                let #pos_antijoindata_ident = #hydroflow.add_state(std::cell::RefCell::new(
+                let #pos_antijoindata_ident = #df_ident.add_state(std::cell::RefCell::new(
                     ::std::vec::Vec::new()
+                ));
+                let #neg_antijoindata_ident = #df_ident.add_state(std::cell::RefCell::new(
+                    #neg_init
                 ));
             },
             Persistence::Mutable => {
@@ -127,22 +136,29 @@ pub const ANTI_JOIN_MULTISET: OperatorConstraints = OperatorConstraints {
             }
         };
 
-        let write_prologue = quote_spanned! {op_span=>
-            let #neg_antijoindata_ident = #hydroflow.add_state(std::cell::RefCell::new(
-                #neg_init
-            ));
-
-            #write_prologue_pos
-        };
-
         let input_neg = &inputs[0]; // N before P
         let input_pos = &inputs[1];
         let write_iterator = match persistences[0] {
-            Persistence::Tick => quote_spanned! {op_span =>
-                let mut #neg_borrow_ident = #context.state_ref(#neg_antijoindata_ident).borrow_mut();
+            Persistence::None => quote_spanned! {op_span=>
+                let mut #neg_borrow_ident = #neg_init;
 
                 #[allow(clippy::needless_borrow)]
-                #neg_borrow.extend(#input_neg);
+                #work_fn(|| #neg_borrow.extend(#input_neg));
+
+                let #ident = #input_pos.filter(|x: &(_,_)| {
+                    #[allow(clippy::needless_borrow)]
+                    #[allow(clippy::unnecessary_mut_passed)]
+                    !#neg_borrow.contains(&x.0)
+                });
+            },
+            Persistence::Tick => quote_spanned! {op_span=>
+                let mut #neg_borrow_ident = unsafe {
+                    // SAFETY: handle from `#df_ident.add_state(..)`.
+                    #context.state_ref_unchecked(#neg_antijoindata_ident)
+                }.borrow_mut();
+
+                #[allow(clippy::needless_borrow)]
+                #work_fn(|| #neg_borrow.extend(#input_neg));
 
                 let #ident = #input_pos.filter(|x: &(_,_)| {
                     #[allow(clippy::needless_borrow)]
@@ -151,8 +167,13 @@ pub const ANTI_JOIN_MULTISET: OperatorConstraints = OperatorConstraints {
                 });
             },
             Persistence::Static => quote_spanned! {op_span =>
-                let mut #neg_borrow_ident = #context.state_ref(#neg_antijoindata_ident).borrow_mut();
-                let mut #pos_borrow_ident = #context.state_ref(#pos_antijoindata_ident).borrow_mut();
+                let (mut #neg_borrow_ident, mut #pos_borrow_ident) = unsafe {
+                    // SAFETY: handles from `#df_ident`.
+                    (
+                        #context.state_ref_unchecked(#neg_antijoindata_ident).borrow_mut(),
+                        #context.state_ref_unchecked(#pos_antijoindata_ident).borrow_mut(),
+                    )
+                };
 
                 #[allow(clippy::needless_borrow)]
                 let #ident = {
@@ -160,14 +181,14 @@ pub const ANTI_JOIN_MULTISET: OperatorConstraints = OperatorConstraints {
                     #[allow(suspicious_double_ref_op)]
                     if context.is_first_run_this_tick() {
                         // Start of new tick
-                        #neg_borrow.extend(#input_neg);
+                        #work_fn(|| #neg_borrow.extend(#input_neg));
 
-                        #pos_borrow_ident.extend(#input_pos);
+                        #work_fn(|| #pos_borrow_ident.extend(#input_pos));
                         #pos_borrow_ident.iter()
                     } else {
                         // Called second or later times on the same tick.
                         let len = #pos_borrow_ident.len();
-                        #pos_borrow_ident.extend(#input_pos);
+                        #work_fn(|| #pos_borrow_ident.extend(#input_pos));
                         #pos_borrow_ident[len..].iter()
                     }
                     .filter(|x: &&(_,_)| {

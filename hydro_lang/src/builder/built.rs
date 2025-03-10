@@ -1,19 +1,21 @@
+use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
 
-use dfir_lang::graph::{eliminate_extra_unions_tees, DfirGraph};
+use dfir_lang::graph::{DfirGraph, eliminate_extra_unions_tees, partition_graph};
 
 use super::compiled::CompiledFlow;
 use super::deploy::{DeployFlow, DeployResult};
 use crate::deploy::{ClusterSpec, Deploy, ExternalSpec, IntoProcessSpec, LocalDeploy};
-use crate::ir::HydroLeaf;
+use crate::ir::{HydroLeaf, emit};
 use crate::location::{Cluster, ExternalProcess, Process};
 use crate::staging_util::Invariant;
 
 pub struct BuiltFlow<'a> {
     pub(super) ir: Vec<HydroLeaf>,
-    pub(super) processes: Vec<usize>,
-    pub(super) clusters: Vec<usize>,
+    pub(super) process_id_name: Vec<(usize, String)>,
+    pub(super) cluster_id_name: Vec<(usize, String)>,
+    pub(super) external_id_name: Vec<(usize, String)>,
     pub(super) used: bool,
 
     pub(super) _phantom: Invariant<'a>,
@@ -22,25 +24,22 @@ pub struct BuiltFlow<'a> {
 impl Drop for BuiltFlow<'_> {
     fn drop(&mut self) {
         if !self.used {
-            panic!("Dropped BuiltFlow without instantiating, you may have forgotten to call `compile` or `deploy`.");
+            panic!(
+                "Dropped BuiltFlow without instantiating, you may have forgotten to call `compile` or `deploy`."
+            );
         }
     }
 }
 
 pub(crate) fn build_inner(ir: &mut Vec<HydroLeaf>) -> BTreeMap<usize, DfirGraph> {
-    let mut builders = BTreeMap::new();
-    let mut built_tees = HashMap::new();
-    let mut next_stmt_id = 0;
-    for leaf in ir {
-        leaf.emit(&mut builders, &mut built_tees, &mut next_stmt_id);
-    }
-
-    builders
+    emit(ir)
         .into_iter()
         .map(|(k, v)| {
             let (mut flat_graph, _, _) = v.build();
             eliminate_extra_unions_tees(&mut flat_graph);
-            (k, flat_graph)
+            let partitioned_graph =
+                partition_graph(flat_graph).expect("Failed to partition (cycle detected).");
+            (k, partitioned_graph)
         })
         .collect()
 }
@@ -50,12 +49,14 @@ impl<'a> BuiltFlow<'a> {
         &self.ir
     }
 
-    pub fn optimize_with(mut self, f: impl FnOnce(Vec<HydroLeaf>) -> Vec<HydroLeaf>) -> Self {
+    pub fn optimize_with(mut self, f: impl FnOnce(&mut [HydroLeaf])) -> Self {
         self.used = true;
+        f(&mut self.ir);
         BuiltFlow {
-            ir: f(std::mem::take(&mut self.ir)),
-            processes: std::mem::take(&mut self.processes),
-            clusters: std::mem::take(&mut self.clusters),
+            ir: std::mem::take(&mut self.ir),
+            process_id_name: std::mem::take(&mut self.process_id_name),
+            cluster_id_name: std::mem::take(&mut self.cluster_id_name),
+            external_id_name: std::mem::take(&mut self.external_id_name),
             used: false,
             _phantom: PhantomData,
         }
@@ -66,31 +67,43 @@ impl<'a> BuiltFlow<'a> {
             .into_deploy()
     }
 
-    fn into_deploy<D: LocalDeploy<'a>>(mut self) -> DeployFlow<'a, D> {
+    pub fn into_deploy<D: LocalDeploy<'a>>(mut self) -> DeployFlow<'a, D> {
         self.used = true;
         let processes = if D::has_trivial_node() {
-            self.processes
+            self.process_id_name
                 .iter()
-                .map(|id| (*id, D::trivial_process(*id)))
+                .map(|id| (id.0, D::trivial_process(id.0)))
                 .collect()
         } else {
             HashMap::new()
         };
 
         let clusters = if D::has_trivial_node() {
-            self.clusters
+            self.cluster_id_name
                 .iter()
-                .map(|id| (*id, D::trivial_cluster(*id)))
+                .map(|id| (id.0, D::trivial_cluster(id.0)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+        let externals = if D::has_trivial_node() {
+            self.external_id_name
+                .iter()
+                .map(|id| (id.0, D::trivial_external(id.0)))
                 .collect()
         } else {
             HashMap::new()
         };
 
         DeployFlow {
-            ir: std::mem::take(&mut self.ir),
-            nodes: processes,
+            ir: UnsafeCell::new(std::mem::take(&mut self.ir)),
+            processes,
+            process_id_name: std::mem::take(&mut self.process_id_name),
             clusters,
-            externals: HashMap::new(),
+            cluster_id_name: std::mem::take(&mut self.cluster_id_name),
+            externals,
+            external_id_name: std::mem::take(&mut self.external_id_name),
             used: false,
             _phantom: PhantomData,
         }
@@ -104,6 +117,13 @@ impl<'a> BuiltFlow<'a> {
         self.into_deploy().with_process(process, spec)
     }
 
+    pub fn with_remaining_processes<D: LocalDeploy<'a>, S: IntoProcessSpec<'a, D> + 'a>(
+        self,
+        spec: impl Fn() -> S,
+    ) -> DeployFlow<'a, D> {
+        self.into_deploy().with_remaining_processes(spec)
+    }
+
     pub fn with_external<P, D: LocalDeploy<'a>>(
         self,
         process: &ExternalProcess<P>,
@@ -112,12 +132,26 @@ impl<'a> BuiltFlow<'a> {
         self.into_deploy().with_external(process, spec)
     }
 
+    pub fn with_remaining_externals<D: LocalDeploy<'a>, S: ExternalSpec<'a, D> + 'a>(
+        self,
+        spec: impl Fn() -> S,
+    ) -> DeployFlow<'a, D> {
+        self.into_deploy().with_remaining_externals(spec)
+    }
+
     pub fn with_cluster<C, D: LocalDeploy<'a>>(
         self,
         cluster: &Cluster<C>,
         spec: impl ClusterSpec<'a, D>,
     ) -> DeployFlow<'a, D> {
         self.into_deploy().with_cluster(cluster, spec)
+    }
+
+    pub fn with_remaining_clusters<D: LocalDeploy<'a>, S: ClusterSpec<'a, D> + 'a>(
+        self,
+        spec: impl Fn() -> S,
+    ) -> DeployFlow<'a, D> {
+        self.into_deploy().with_remaining_clusters(spec)
     }
 
     pub fn compile<D: Deploy<'a>>(self, env: &D::CompileEnv) -> CompiledFlow<'a, D::GraphId> {

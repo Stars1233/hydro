@@ -6,7 +6,7 @@ use super::{
     RANGE_0, RANGE_1,
 };
 
-/// An operator representing a [lattice bimorphism](https://hydro.run/docs/hydroflow/lattices_crate/lattice_math#lattice-bimorphism).
+/// An operator representing a [lattice bimorphism](https://hydro.run/docs/dfir/lattices_crate/lattice_math#lattice-bimorphism).
 ///
 /// > 2 input streams, of type `LhsItem` and `RhsItem`.
 ///
@@ -98,8 +98,13 @@ pub const LATTICE_BIMORPHISM: OperatorConstraints = OperatorConstraints {
                     RhsState: 'static + ::std::clone::Clone,
                     Output: #root::lattices::Merge<Output>,
                 {
-                    let lhs_state = context.state_ref(lhs_state_handle);
-                    let rhs_state = context.state_ref(rhs_state_handle);
+                    let (lhs_state, rhs_state) = unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        (
+                            context.state_ref_unchecked(lhs_state_handle),
+                            context.state_ref_unchecked(rhs_state_handle),
+                        )
+                    };
 
                     let iter = ::std::iter::from_fn(move || {
                         // Use `from_fn` instead of `chain` to dodge multiple ownership of `func`.

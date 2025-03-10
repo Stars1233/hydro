@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use futures::io::BufReader as FuturesBufReader;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
 use hydroflow_deploy_integration::ServerBindConfig;
-use inferno::collapse::perf::Folder;
 use inferno::collapse::Collapse;
+use inferno::collapse::perf::Folder;
 use nanoid::nanoid;
 use tokio::io::BufReader as TokioBufReader;
 use tokio::net::{TcpListener, TcpStream};
@@ -22,25 +22,27 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_util::io::SyncIoBridge;
 
-use super::progress::ProgressTracker;
-use super::util::async_retry;
-use super::{LaunchedBinary, LaunchedHost, ResourceResult, ServerStrategy};
 use crate::hydroflow_crate::build::BuildOutput;
 use crate::hydroflow_crate::flamegraph::handle_fold_data;
 use crate::hydroflow_crate::tracing_options::TracingOptions;
-use crate::util::prioritized_broadcast;
+use crate::progress::ProgressTracker;
+use crate::util::{async_retry, prioritized_broadcast};
+use crate::{LaunchedBinary, LaunchedHost, ResourceResult, ServerStrategy, TracingResults};
 
 const PERF_OUTFILE: &str = "__profile.perf.data";
+
+pub type PrefixFilteredChannel = (Option<String>, mpsc::UnboundedSender<String>);
 
 struct LaunchedSshBinary {
     _resource_result: Arc<ResourceResult>,
     session: Option<AsyncSession<TcpStream>>,
     channel: AsyncChannel<TcpStream>,
     stdin_sender: mpsc::UnboundedSender<String>,
-    stdout_receivers: Arc<Mutex<Vec<mpsc::UnboundedSender<String>>>>,
+    stdout_receivers: Arc<Mutex<Vec<PrefixFilteredChannel>>>,
     stdout_deploy_receivers: Arc<Mutex<Option<oneshot::Sender<String>>>>,
-    stderr_receivers: Arc<Mutex<Vec<mpsc::UnboundedSender<String>>>>,
+    stderr_receivers: Arc<Mutex<Vec<PrefixFilteredChannel>>>,
     tracing: Option<TracingOptions>,
+    tracing_results: Option<TracingResults>,
 }
 
 #[async_trait]
@@ -64,15 +66,33 @@ impl LaunchedBinary for LaunchedSshBinary {
     fn stdout(&self) -> mpsc::UnboundedReceiver<String> {
         let mut receivers = self.stdout_receivers.lock().unwrap();
         let (sender, receiver) = mpsc::unbounded_channel::<String>();
-        receivers.push(sender);
+        receivers.push((None, sender));
         receiver
     }
 
     fn stderr(&self) -> mpsc::UnboundedReceiver<String> {
         let mut receivers = self.stderr_receivers.lock().unwrap();
         let (sender, receiver) = mpsc::unbounded_channel::<String>();
-        receivers.push(sender);
+        receivers.push((None, sender));
         receiver
+    }
+
+    fn stdout_filter(&self, prefix: String) -> mpsc::UnboundedReceiver<String> {
+        let mut receivers = self.stdout_receivers.lock().unwrap();
+        let (sender, receiver) = mpsc::unbounded_channel::<String>();
+        receivers.push((Some(prefix), sender));
+        receiver
+    }
+
+    fn stderr_filter(&self, prefix: String) -> mpsc::UnboundedReceiver<String> {
+        let mut receivers = self.stderr_receivers.lock().unwrap();
+        let (sender, receiver) = mpsc::unbounded_channel::<String>();
+        receivers.push((Some(prefix), sender));
+        receiver
+    }
+
+    fn tracing_results(&self) -> Option<&TracingResults> {
+        self.tracing_results.as_ref()
     }
 
     fn exit_code(&self) -> Option<i32> {
@@ -146,6 +166,10 @@ impl LaunchedBinary for LaunchedSshBinary {
                 Result::<_>::Ok(fold_data)
             })
             .await?;
+
+            self.tracing_results = Some(TracingResults {
+                folded_data: fold_data.clone(),
+            });
 
             handle_fold_data(tracing, fold_data).await?;
         };
@@ -420,6 +444,7 @@ impl<T: LaunchedSshHost> LaunchedHost for T {
             stdout_receivers,
             stderr_receivers,
             tracing,
+            tracing_results: None,
         }))
     }
 

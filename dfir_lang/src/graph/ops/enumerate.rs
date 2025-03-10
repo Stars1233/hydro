@@ -40,7 +40,7 @@ pub const ENUMERATE: OperatorConstraints = OperatorConstraints {
                    root,
                    op_span,
                    context,
-                   hydroflow,
+                   df_ident,
                    ident,
                    inputs,
                    outputs,
@@ -76,17 +76,20 @@ pub const ENUMERATE: OperatorConstraints = OperatorConstraints {
         let counter_ident = wc.make_ident("counterdata");
 
         let mut write_prologue = quote_spanned! {op_span=>
-            let #counter_ident = #hydroflow.add_state(::std::cell::RefCell::new(0..));
+            let #counter_ident = #df_ident.add_state(::std::cell::RefCell::new(0..));
         };
         if Persistence::Tick == persistence {
             write_prologue.extend(quote_spanned! {op_span=>
-                #hydroflow.set_state_tick_hook(#counter_ident, |rcell| { rcell.replace(0..); });
+                #df_ident.set_state_tick_hook(#counter_ident, |rcell| { rcell.replace(0..); });
             });
         }
 
         let map_fn = quote_spanned! {op_span=>
             |item| {
-                let mut counter = #context.state_ref(#counter_ident).borrow_mut();
+                let mut counter = unsafe {
+                    // SAFETY: handle from `#df_ident.add_state(..)`.
+                    #context.state_ref_unchecked(#counter_ident)
+                }.borrow_mut();
                 (counter.next().unwrap(), item)
             }
         };

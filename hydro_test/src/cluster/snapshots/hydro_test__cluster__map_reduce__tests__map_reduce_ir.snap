@@ -7,20 +7,17 @@ expression: built.ir()
         f: stageleft :: runtime_support :: fn1_type_hint :: < (std :: string :: String , i32) , () > ({ use crate :: __staged :: cluster :: map_reduce :: * ; | (string , count) | println ! ("{}: {}" , string , count) }),
         input: ReduceKeyed {
             f: stageleft :: runtime_support :: fn2_borrow_mut_type_hint :: < i32 , i32 , () > ({ use crate :: __staged :: cluster :: map_reduce :: * ; | total , count | * total += count }),
-            input: Persist(
-                Map {
+            input: Persist {
+                inner: Map {
                     f: stageleft :: runtime_support :: fn1_type_hint :: < (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < hydro_test :: cluster :: map_reduce :: Worker > , (std :: string :: String , i32)) , (std :: string :: String , i32) > ({ use hydro_lang :: __staged :: stream :: * ; | (_ , b) | b }),
                     input: Network {
-                        from_location: Cluster(
-                            1,
-                        ),
                         from_key: None,
                         to_location: Process(
                             0,
                         ),
                         to_key: None,
                         serialize_fn: Some(
-                            | data | { hydro_lang :: runtime_support :: bincode :: serialize :: < (std :: string :: String , i32) > (& data) . unwrap () . into () },
+                            :: hydro_lang :: runtime_support :: stageleft :: runtime_support :: fn1_type_hint :: < (std :: string :: String , i32) , _ > (| data | { hydro_lang :: runtime_support :: bincode :: serialize (& data) . unwrap () . into () }),
                         ),
                         instantiate_fn: <network instantiate>,
                         deserialize_fn: Some(
@@ -34,16 +31,13 @@ expression: built.ir()
                                 input: Map {
                                     f: stageleft :: runtime_support :: fn1_type_hint :: < std :: string :: String , (std :: string :: String , ()) > ({ use crate :: __staged :: cluster :: map_reduce :: * ; | string | (string , ()) }),
                                     input: Network {
-                                        from_location: Process(
-                                            0,
-                                        ),
                                         from_key: None,
                                         to_location: Cluster(
                                             1,
                                         ),
                                         to_key: None,
                                         serialize_fn: Some(
-                                            | (id , data) : (hydro_lang :: ClusterId < _ > , std :: string :: String) | { (id . raw_id , hydro_lang :: runtime_support :: bincode :: serialize :: < std :: string :: String > (& data) . unwrap () . into ()) },
+                                            :: hydro_lang :: runtime_support :: stageleft :: runtime_support :: fn1_type_hint :: < (hydro_lang :: ClusterId < _ > , std :: string :: String) , _ > (| (id , data) | { (id . raw_id , hydro_lang :: runtime_support :: bincode :: serialize (& data) . unwrap () . into ()) }),
                                         ),
                                         instantiate_fn: <network instantiate>,
                                         deserialize_fn: Some(
@@ -62,17 +56,147 @@ expression: built.ir()
                                                         location_kind: Process(
                                                             0,
                                                         ),
+                                                        metadata: HydroIrMetadata {
+                                                            location_kind: Process(
+                                                                0,
+                                                            ),
+                                                            output_type: Some(
+                                                                & str,
+                                                            ),
+                                                            cardinality: None,
+                                                            cpu_usage: None,
+                                                        },
+                                                    },
+                                                    metadata: HydroIrMetadata {
+                                                        location_kind: Process(
+                                                            0,
+                                                        ),
+                                                        output_type: Some(
+                                                            std :: string :: String,
+                                                        ),
+                                                        cardinality: None,
+                                                        cpu_usage: None,
                                                     },
                                                 },
+                                                metadata: HydroIrMetadata {
+                                                    location_kind: Process(
+                                                        0,
+                                                    ),
+                                                    output_type: Some(
+                                                        (usize , std :: string :: String),
+                                                    ),
+                                                    cardinality: None,
+                                                    cpu_usage: None,
+                                                },
+                                            },
+                                            metadata: HydroIrMetadata {
+                                                location_kind: Process(
+                                                    0,
+                                                ),
+                                                output_type: Some(
+                                                    (hydro_lang :: location :: cluster :: cluster_id :: ClusterId < hydro_test :: cluster :: map_reduce :: Worker > , std :: string :: String),
+                                                ),
+                                                cardinality: None,
+                                                cpu_usage: None,
                                             },
                                         },
+                                        metadata: HydroIrMetadata {
+                                            location_kind: Cluster(
+                                                1,
+                                            ),
+                                            output_type: Some(
+                                                std :: string :: String,
+                                            ),
+                                            cardinality: None,
+                                            cpu_usage: None,
+                                        },
+                                    },
+                                    metadata: HydroIrMetadata {
+                                        location_kind: Cluster(
+                                            1,
+                                        ),
+                                        output_type: Some(
+                                            (std :: string :: String , ()),
+                                        ),
+                                        cardinality: None,
+                                        cpu_usage: None,
                                     },
                                 },
+                                metadata: HydroIrMetadata {
+                                    location_kind: Cluster(
+                                        1,
+                                    ),
+                                    output_type: Some(
+                                        (std :: string :: String , i32),
+                                    ),
+                                    cardinality: None,
+                                    cpu_usage: None,
+                                },
+                            },
+                            metadata: HydroIrMetadata {
+                                location_kind: Cluster(
+                                    1,
+                                ),
+                                output_type: Some(
+                                    (std :: string :: String , i32),
+                                ),
+                                cardinality: None,
+                                cpu_usage: None,
                             },
                         },
+                        metadata: HydroIrMetadata {
+                            location_kind: Process(
+                                0,
+                            ),
+                            output_type: Some(
+                                (std :: string :: String , i32),
+                            ),
+                            cardinality: None,
+                            cpu_usage: None,
+                        },
+                    },
+                    metadata: HydroIrMetadata {
+                        location_kind: Process(
+                            0,
+                        ),
+                        output_type: Some(
+                            (std :: string :: String , i32),
+                        ),
+                        cardinality: None,
+                        cpu_usage: None,
                     },
                 },
+                metadata: HydroIrMetadata {
+                    location_kind: Process(
+                        0,
+                    ),
+                    output_type: Some(
+                        (std :: string :: String , i32),
+                    ),
+                    cardinality: None,
+                    cpu_usage: None,
+                },
+            },
+            metadata: HydroIrMetadata {
+                location_kind: Process(
+                    0,
+                ),
+                output_type: Some(
+                    (std :: string :: String , i32),
+                ),
+                cardinality: None,
+                cpu_usage: None,
+            },
+        },
+        metadata: HydroIrMetadata {
+            location_kind: Process(
+                0,
             ),
+            output_type: Some(
+                (std :: string :: String , i32),
+            ),
+            cardinality: None,
+            cpu_usage: None,
         },
     },
 ]

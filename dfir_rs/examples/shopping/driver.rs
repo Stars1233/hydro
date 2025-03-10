@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use dfir_rs::util::ipv4_resolve;
 
+use crate::Opts;
 use crate::flows::bp_flow::bp_flow;
 use crate::flows::client_state_flow::client_state_flow;
 use crate::flows::listener_flow::listener_flow;
@@ -10,9 +11,8 @@ use crate::flows::push_group_flow::push_group_flow;
 use crate::flows::rep_server_flow::rep_server_flow;
 use crate::flows::server_state_flow::server_state_flow;
 use crate::flows::ssiv_flow::ssiv_flow;
-use crate::test_data::{client100_vec, client1_vec, client2_vec};
+use crate::test_data::{client1_vec, client2_vec, client100_vec};
 use crate::wrappers::{bp_wrap, ssiv_wrap, tuple_wrap};
-use crate::Opts;
 
 // spawn a listener to get the output of a flow and print it on the console
 async fn spawn_listener(
@@ -83,8 +83,8 @@ pub(crate) async fn run_driver(opts: Opts) {
             let client_out_addr = ipv4_resolve("localhost:23460").unwrap();
             let (client_out, _, _) = dfir_rs::util::bind_udp_bytes(client_out_addr).await;
 
-            // shopping input is handled by the client proxy transducer
-            // so the server transducer should get an empty iterator as its first argument
+            // shopping input is handled by the client proxy process
+            // so the server process should get an empty iterator as its first argument
             let empty_ssiv = std::iter::empty();
 
             // Spawn server
@@ -180,8 +180,8 @@ pub(crate) async fn run_driver(opts: Opts) {
                 let (out, _, _) = dfir_rs::util::bind_udp_bytes(out_addr).await;
                 let gossip_addrs = gossip_addrs.clone();
 
-                // shopping input is handled by the client proxy transducer
-                // so the server transducers should get an empty iterator as first argument
+                // shopping input is handled by the client proxy process
+                // so the server processes should get an empty iterator as first argument
                 let empty_ssiv = std::iter::empty();
 
                 // Spawn server

@@ -7,7 +7,7 @@ use super::{
 use crate::diagnostic::{Diagnostic, Level};
 
 /// `persist_mut_keyed()` is similar to `persist_mut()` except that it also enables key-based deletions
-/// `persist_mut()` expects an input of type [`PersistenceKeyed<T>`](https://docs.rs/hydroflow/latest/hydroflow/util/enum.PersistenceKeyed.html),
+/// `persist_mut()` expects an input of type [`PersistenceKeyed<T>`](https://docs.rs/dfir_rs/latest/dfir_rs/util/enum.PersistenceKeyed.html),
 /// and it is this enumeration that enables the user to communicate deletion.
 /// Deletions/persists happen in the order they are received in the stream.
 /// For example, `[Persist(1), Delete(1), Persist(1)]` will result in a a single `1` value being stored.
@@ -46,7 +46,7 @@ pub const PERSIST_MUT_KEYED: OperatorConstraints = OperatorConstraints {
     write_fn: |wc @ &WriteContextArgs {
                    root,
                    context,
-                   hydroflow,
+                   df_ident,
                    op_span,
                    ident,
                    inputs,
@@ -76,7 +76,7 @@ pub const PERSIST_MUT_KEYED: OperatorConstraints = OperatorConstraints {
         let persistdata_ident = wc.make_ident("persistdata");
         let vec_ident = wc.make_ident("persistvec");
         let write_prologue = quote_spanned! {op_span=>
-            let #persistdata_ident = #hydroflow.add_state(::std::cell::RefCell::new(
+            let #persistdata_ident = #df_ident.add_state(::std::cell::RefCell::new(
                 #root::rustc_hash::FxHashMap::<_, #root::util::sparse_vec::SparseVec<_>>::default()
             ));
         };
@@ -84,7 +84,11 @@ pub const PERSIST_MUT_KEYED: OperatorConstraints = OperatorConstraints {
         let write_iterator = {
             let input = &inputs[0];
             quote_spanned! {op_span=>
-                let mut #vec_ident = #context.state_ref(#persistdata_ident).borrow_mut();
+                let mut #vec_ident = unsafe {
+                    // SAFETY: handle from `#df_ident.add_state(..)`.
+                    #context.state_ref_unchecked(#persistdata_ident)
+                }.borrow_mut();
+
                 let #ident = {
                     #[inline(always)]
                     fn check_iter<K, V>(iter: impl Iterator<Item = #root::util::PersistenceKeyed::<K, V>>) -> impl Iterator<Item = #root::util::PersistenceKeyed::<K, V>> {

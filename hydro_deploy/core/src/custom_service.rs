@@ -2,16 +2,16 @@ use std::any::Any;
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock, Weak};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use hydroflow_deploy_integration::{ConnectedDirect, ServerPort};
 use tokio::sync::RwLock;
 
-use super::hydroflow_crate::ports::{
-    HydroflowServer, HydroflowSink, HydroflowSource, ServerConfig, SourcePath,
+use crate::hydroflow_crate::ports::{
+    HydroflowServer, HydroflowSink, HydroflowSource, ReverseSinkInstantiator, ServerConfig,
+    SourcePath,
 };
-use super::{Host, LaunchedHost, ResourceBatch, ResourceResult, ServerStrategy, Service};
-use crate::hydroflow_crate::ports::ReverseSinkInstantiator;
+use crate::{Host, LaunchedHost, ResourceBatch, ResourceResult, ServerStrategy, Service};
 
 /// Represents an unknown, third-party service that is not part of the Hydroflow ecosystem.
 pub struct CustomService {

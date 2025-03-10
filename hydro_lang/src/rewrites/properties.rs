@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use stageleft::*;
 
-use crate::ir::{HydroLeaf, HydroNode, SeenTees};
+use crate::ir::{HydroLeaf, HydroNode, transform_bottom_up};
 
 /// Structure for tracking expressions known to have particular algebraic properties.
 ///
@@ -59,11 +59,7 @@ impl PropertyDatabase {
 // Dataflow graph optimization rewrite rules based on algebraic property tags
 // TODO add a test that verifies the space of possible graphs after rewrites is correct for each property
 
-fn properties_optimize_node(node: &mut HydroNode, db: &PropertyDatabase, seen_tees: &mut SeenTees) {
-    node.transform_children(
-        |node, seen_tees| properties_optimize_node(node, db, seen_tees),
-        seen_tees,
-    );
+fn properties_optimize_node(node: &mut HydroNode, db: &mut PropertyDatabase) {
     match node {
         HydroNode::ReduceKeyed { f, .. } if db.is_tagged_commutative(&f.0) => {
             dbg!("IDENTIFIED COMMUTATIVE OPTIMIZATION for {:?}", &f);
@@ -72,24 +68,18 @@ fn properties_optimize_node(node: &mut HydroNode, db: &PropertyDatabase, seen_te
     }
 }
 
-pub fn properties_optimize(ir: Vec<HydroLeaf>, db: &PropertyDatabase) -> Vec<HydroLeaf> {
-    let mut seen_tees = Default::default();
-    ir.into_iter()
-        .map(|l| {
-            l.transform_children(
-                |node, seen_tees| properties_optimize_node(node, db, seen_tees),
-                &mut seen_tees,
-            )
-        })
-        .collect()
+pub fn properties_optimize(ir: &mut [HydroLeaf], db: &mut PropertyDatabase) {
+    transform_bottom_up(ir, &mut |_| (), &mut |node| {
+        properties_optimize_node(node, db)
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FlowBuilder;
     use crate::deploy::SingleProcessGraph;
     use crate::location::Location;
-    use crate::FlowBuilder;
 
     #[test]
     fn test_property_database() {
@@ -121,15 +111,14 @@ mod tests {
             process
                 .source_iter(q!(vec![]))
                 .map(q!(|string: String| (string, ())))
-                .timestamped(&tick)
-                .tick_batch()
+                .tick_batch(&tick)
         }
         .fold_keyed(q!(|| 0), counter_func)
         .all_ticks()
         .for_each(q!(|(string, count)| println!("{}: {}", string, count)));
 
         let built = flow
-            .optimize_with(|ir| properties_optimize(ir, &database))
+            .optimize_with(|ir| properties_optimize(ir, &mut database))
             .with_default_optimize::<SingleProcessGraph>();
 
         insta::assert_debug_snapshot!(built.ir());

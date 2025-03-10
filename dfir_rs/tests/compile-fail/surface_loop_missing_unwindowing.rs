@@ -3,7 +3,7 @@ fn main() {
         a = source_iter(0..10);
         loop {
             b = a -> batch();
-        }
+        };
         b -> null();
     };
     df.run_available();

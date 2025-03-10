@@ -1,17 +1,17 @@
 #![warn(missing_docs)]
 
-//! Hydroflow is a low-level dataflow-based runtime system for the [Hydro Project](https://hydro.run/).
+//! DFIR is a low-level dataflow-based runtime system for the [Hydro Project](https://hydro.run/).
 //!
-//! The primary item in this crate is the [`Hydroflow`](crate::scheduled::graph::Dfir) struct,
-//! representing a Hydroflow dataflow graph. Although this graph can be manually constructed, the
-//! easiest way to instantiate a `Hydroflow` instance is with the [`dfir_syntax!`] macro using
-//! Hydroflow's custom "surface syntax."
+//! The primary item in this crate is the [`Dfir`](crate::scheduled::graph::Dfir) struct,
+//! representing a DFIR dataflow graph. Although this graph can be manually constructed, the
+//! easiest way to instantiate a graph instance is with the [`dfir_syntax!`] macro using
+//! DFIR's custom syntax.
 //!
 //! ```rust
-//! let mut hf = dfir_rs::dfir_syntax! {
+//! let mut df = dfir_rs::dfir_syntax! {
 //!     source_iter(["hello", "world"]) -> for_each(|s| println!("{}", s));
 //! };
-//! hf.run_available();
+//! df.run_available();
 //! ```
 //!
 //! For more examples, check out the [`examples` folder on Github](https://github.com/hydro-project/hydro/tree/main/dfir_rs/examples).
@@ -36,8 +36,8 @@ mod declarative_macro;
 pub use dfir_datalog::*;
 #[cfg(feature = "dfir_macro")]
 pub use dfir_macro::{
-    dfir_main as main, dfir_parser, dfir_syntax, dfir_syntax_noemit, dfir_test as test,
-    monotonic_fn, morphism, DemuxEnum,
+    DemuxEnum, dfir_main as main, dfir_parser, dfir_syntax, dfir_syntax_noemit, dfir_test as test,
+    monotonic_fn, morphism,
 };
 
 // TODO(mingwei): Use the [nightly "never" type `!`](https://doc.rust-lang.org/std/primitive.never.html)

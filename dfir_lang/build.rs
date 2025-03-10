@@ -1,12 +1,12 @@
 use std::convert::identity;
-use std::env::{var, VarError};
+use std::env::{VarError, var};
 use std::fs::File;
 use std::io::{BufWriter, Error, ErrorKind, Result, Write};
 use std::path::PathBuf;
 
-use rustc_version::{version_meta, Channel};
+use rustc_version::{Channel, version_meta};
 use syn::{
-    parse_quote, AttrStyle, Expr, ExprLit, Ident, Item, Lit, Member, Meta, MetaNameValue, Path,
+    AttrStyle, Expr, ExprLit, Ident, Item, Lit, Member, Meta, MetaNameValue, Path, parse_quote,
 };
 
 const OPS_PATH: &str = "src/graph/ops";
@@ -22,7 +22,7 @@ fn main() {
         println!("cargo:rustc-cfg=nightly");
     }
 
-    if Err(VarError::NotPresent) != var("CARGO_CFG_HYDROFLOW_GENERATE_DOCS") {
+    if Err(VarError::NotPresent) != var("CARGO_CFG_DFIR_GENERATE_DOCS") {
         if let Err(err) = generate_op_docs() {
             eprintln!("dfir_lang/build.rs error: {:?}", err);
         }
@@ -104,7 +104,7 @@ fn generate_op_docs() -> Result<()> {
                 if doc_str.trim_start().starts_with("```") {
                     if in_hf_doctest {
                         in_hf_doctest = false;
-                        writeln!(docgen_write, "{}", DOCTEST_HYDROFLOW_SUFFIX)?;
+                        writeln!(docgen_write, "{}", DOCTEST_SUFFIX)?;
                         // Output `doc_str` below.
                     } else if doc_str.trim() == "```dfir" {
                         in_hf_doctest = true;
@@ -114,7 +114,7 @@ fn generate_op_docs() -> Result<()> {
                         if "py_udf" == op_name {
                             writeln!(docgen_write, "# #[cfg(feature = \"python\")]")?;
                         }
-                        writeln!(docgen_write, "{}", DOCTEST_HYDROFLOW_PREFIX)?;
+                        writeln!(docgen_write, "{}", DOCTEST_PREFIX)?;
                         continue;
                     } else if doc_str.trim() == "```rustbook" {
                         writeln!(docgen_write, "```rust")?;
@@ -130,12 +130,12 @@ fn generate_op_docs() -> Result<()> {
     Ok(())
 }
 
-const DOCTEST_HYDROFLOW_PREFIX: &str = "\
+const DOCTEST_PREFIX: &str = "\
 # {
 # let __rt = ::dfir_rs::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 # __rt.block_on(async { ::dfir_rs::tokio::task::LocalSet::new().run_until(async {
 # let mut __hf = ::dfir_rs::dfir_syntax! {";
-const DOCTEST_HYDROFLOW_SUFFIX: &str = "\
+const DOCTEST_SUFFIX: &str = "\
 # };
 # __hf.run_available();
 # }).await})

@@ -23,10 +23,7 @@ pub fn teed_join<'a, S: Stream<Item = u32> + Unpin + 'a>(
 
     let source = unsafe {
         // SAFETY: intentionally using ticks
-        node_zero
-            .source_stream(input_stream)
-            .timestamped(&n0_tick)
-            .tick_batch()
+        node_zero.source_stream(input_stream).tick_batch(&n0_tick)
     };
     let map1 = source.clone().map(q!(|v| (v + 1, ())));
     let map2 = source.map(q!(|v| (v - 1, ())));
@@ -52,7 +49,7 @@ pub fn teed_join<'a, S: Stream<Item = u32> + Unpin + 'a>(
         .with_dynamic_id(subgraph_id)
 }
 
-#[stageleft::runtime]
+#[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
     use dfir_rs::assert_graphvis_snapshots;

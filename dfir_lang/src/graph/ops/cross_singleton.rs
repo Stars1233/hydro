@@ -1,9 +1,9 @@
-use quote::{quote_spanned, ToTokens};
+use quote::{ToTokens, quote_spanned};
 use syn::parse_quote;
 
 use super::{
-    DelayType, OperatorCategory, OperatorConstraints, OperatorWriteOutput, WriteContextArgs,
-    RANGE_0, RANGE_1,
+    DelayType, OperatorCategory, OperatorConstraints, OperatorWriteOutput, RANGE_0, RANGE_1,
+    WriteContextArgs,
 };
 use crate::graph::PortIndexValue;
 
@@ -50,11 +50,12 @@ pub const CROSS_SINGLETON: OperatorConstraints = OperatorConstraints {
     },
     write_fn: |wc @ &WriteContextArgs {
                    context,
-                   hydroflow,
+                   df_ident,
                    ident,
                    op_span,
                    inputs,
                    is_pull,
+                   work_fn,
                    ..
                },
                _diagnostics| {
@@ -65,32 +66,34 @@ pub const CROSS_SINGLETON: OperatorConstraints = OperatorConstraints {
         let singleton_handle_ident = wc.make_ident("singleton_handle");
 
         let write_prologue = quote_spanned! {op_span=>
-            let #singleton_handle_ident = #hydroflow.add_state(
+            let #singleton_handle_ident = #df_ident.add_state(
                 ::std::cell::RefCell::new(::std::option::Option::None)
             );
             // Reset the value if it is a new tick.
-            #hydroflow.set_state_tick_hook(#singleton_handle_ident, |rcell| { rcell.take(); });
+            #df_ident.set_state_tick_hook(#singleton_handle_ident, |rcell| { rcell.take(); });
         };
 
         let write_iterator = quote_spanned! {op_span=>
             let #ident = {
                 #[inline(always)]
-                fn cross_singleton_guard<Singleton, Item>(
+                fn cross_singleton_guard<Singleton, Item, SingletonIter, Stream>(
                     mut singleton_state_mut: std::cell::RefMut<'_, Option<Singleton>>,
-                    mut singleton_input: impl Iterator<Item = Singleton>,
-                    stream_input: impl Iterator<Item = Item>,
-                ) -> impl Iterator<Item = (Item, Singleton)>
+                    mut singleton_input: SingletonIter,
+                    stream_input: Stream,
+                ) -> impl use<Item, Singleton, Stream, /*TODO: https://github.com/rust-lang/rust/issues/130043 */ SingletonIter> + Iterator<Item = (Item, Singleton)>
                 where
                     Singleton: ::std::clone::Clone,
+                    SingletonIter: Iterator<Item = Singleton>,
+                    Stream: Iterator<Item = Item>,
                 {
-                    let singleton_value_opt = match &*singleton_state_mut {
+                    let singleton_value_opt = #work_fn(|| match &*singleton_state_mut {
                         ::std::option::Option::Some(singleton_value) => Some(singleton_value.clone()),
                         ::std::option::Option::None => {
                             let singleton_value_opt = singleton_input.next();
                             *singleton_state_mut = singleton_value_opt.clone();
                             singleton_value_opt
                         }
-                    };
+                    });
                     singleton_value_opt
                         .map(|singleton_value| {
                             stream_input.map(move |item| (item, ::std::clone::Clone::clone(&singleton_value)))
@@ -99,7 +102,10 @@ pub const CROSS_SINGLETON: OperatorConstraints = OperatorConstraints {
                         .flatten()
                 }
                 cross_singleton_guard(
-                    #context.state_ref(#singleton_handle_ident).borrow_mut(),
+                    unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        #context.state_ref_unchecked(#singleton_handle_ident)
+                    }.borrow_mut(),
                     #singleton_input,
                     #stream_input,
                 )

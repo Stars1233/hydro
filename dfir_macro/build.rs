@@ -1,16 +1,16 @@
 //! Build script to generate operator book docs.
 
 use std::env::VarError;
-use std::fmt::Write as _FmtWrite;
+use std::fmt::Write as _;
 use std::fs::File;
-use std::io::{BufWriter, Read, Result, Write};
+use std::io::{BufWriter, Result, Write};
 use std::path::{Path, PathBuf};
 
-use dfir_lang::graph::ops::{PortListSpec, OPERATORS};
 use dfir_lang::graph::PortIndexValue;
+use dfir_lang::graph::ops::{OPERATORS, PortListSpec};
 use itertools::Itertools;
 use quote::ToTokens;
-use rustc_version::{version_meta, Channel};
+use rustc_version::{Channel, version_meta};
 
 const FILENAME: &str = "surface_ops_gen.md";
 
@@ -33,16 +33,8 @@ fn write_operator_docgen(op_name: &str, write: &mut impl Write) -> Result<()> {
         "../docs/docgen",
         &*format!("{}.md", op_name),
     ]);
-    let mut read_string = String::new();
-    File::open(doctest_path)?.read_to_string(&mut read_string)?;
-    write!(
-        write,
-        "{}",
-        read_string
-            .split("<!--")
-            .map(|t| t.replace("<", "\\<"))
-            .join("<!--")
-    )?;
+    let mut read = File::open(doctest_path)?;
+    std::io::copy(&mut read, write)?;
     Ok(())
 }
 
@@ -216,7 +208,7 @@ fn main() {
         println!("cargo:rustc-cfg=nightly");
     }
 
-    if Err(VarError::NotPresent) != std::env::var("CARGO_CFG_HYDROFLOW_GENERATE_DOCS") {
+    if Err(VarError::NotPresent) != std::env::var("CARGO_CFG_DFIR_GENERATE_DOCS") {
         if let Err(err) = update_book() {
             eprintln!("dfir_macro/build.rs error: {:?}", err);
         }
@@ -226,6 +218,7 @@ fn main() {
 const PREFIX: &str = "\
 ---
 sidebar_position: 4
+custom_edit_url: https://github.com/hydro-project/hydro/tree/main/dfir_lang/src/graph/ops
 ---
 
 # DFIR Operators
