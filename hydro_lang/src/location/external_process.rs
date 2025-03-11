@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use dfir_rs::bytes::Bytes;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::{Location, LocationId, NoTick};
 use crate::builder::FlowState;
@@ -110,19 +110,23 @@ impl<'a, P> ExternalProcess<'a, P> {
             },
             Stream::new(
                 to.clone(),
-                HydroNode::Persist(Box::new(HydroNode::Network {
-                    from_location: LocationId::ExternalProcess(self.id),
-                    from_key: Some(next_external_port_id),
-                    to_location: to.id(),
-                    to_key: None,
-                    serialize_fn: None,
-                    instantiate_fn: crate::ir::DebugInstantiate::Building(),
-                    deserialize_fn: Some(deser_expr.into()),
-                    input: Box::new(HydroNode::Source {
-                        source: HydroSource::ExternalNetwork(),
-                        location_kind: LocationId::ExternalProcess(self.id),
+                HydroNode::Persist {
+                    inner: Box::new(HydroNode::Network {
+                        from_key: Some(next_external_port_id),
+                        to_location: to.id(),
+                        to_key: None,
+                        serialize_fn: None,
+                        instantiate_fn: crate::ir::DebugInstantiate::Building,
+                        deserialize_fn: Some(deser_expr.into()),
+                        input: Box::new(HydroNode::Source {
+                            source: HydroSource::ExternalNetwork(),
+                            location_kind: LocationId::ExternalProcess(self.id),
+                            metadata: self.new_node_metadata::<Bytes>(),
+                        }),
+                        metadata: to.new_node_metadata::<Bytes>(),
                     }),
-                })),
+                    metadata: to.new_node_metadata::<Bytes>(),
+                },
             ),
         )
     }
@@ -146,19 +150,23 @@ impl<'a, P> ExternalProcess<'a, P> {
             },
             Stream::new(
                 to.clone(),
-                HydroNode::Persist(Box::new(HydroNode::Network {
-                    from_location: LocationId::ExternalProcess(self.id),
-                    from_key: Some(next_external_port_id),
-                    to_location: to.id(),
-                    to_key: None,
-                    serialize_fn: None,
-                    instantiate_fn: crate::ir::DebugInstantiate::Building(),
-                    deserialize_fn: Some(crate::stream::deserialize_bincode::<T>(None).into()),
-                    input: Box::new(HydroNode::Source {
-                        source: HydroSource::ExternalNetwork(),
-                        location_kind: LocationId::ExternalProcess(self.id),
+                HydroNode::Persist {
+                    inner: Box::new(HydroNode::Network {
+                        from_key: Some(next_external_port_id),
+                        to_location: to.id(),
+                        to_key: None,
+                        serialize_fn: None,
+                        instantiate_fn: crate::ir::DebugInstantiate::Building,
+                        deserialize_fn: Some(crate::stream::deserialize_bincode::<T>(None).into()),
+                        input: Box::new(HydroNode::Source {
+                            source: HydroSource::ExternalNetwork(),
+                            location_kind: LocationId::ExternalProcess(self.id),
+                            metadata: self.new_node_metadata::<T>(),
+                        }),
+                        metadata: to.new_node_metadata::<T>(),
                     }),
-                })),
+                    metadata: to.new_node_metadata::<T>(),
+                },
             ),
         )
     }

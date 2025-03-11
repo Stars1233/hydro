@@ -5,7 +5,8 @@ pub use stageleft::q;
 
 #[doc(hidden)]
 pub mod runtime_support {
-    pub use bincode;
+    pub use {bincode, stageleft};
+    pub mod resource_measurement;
 }
 
 pub mod runtime_context;
@@ -25,7 +26,7 @@ pub use optional::Optional;
 
 pub mod location;
 pub use location::cluster::CLUSTER_SELF_ID;
-pub use location::{Cluster, ClusterId, ExternalProcess, Location, Process, Tick, Timestamped};
+pub use location::{Atomic, Cluster, ClusterId, ExternalProcess, Location, Process, Tick};
 
 #[cfg(feature = "build")]
 pub mod deploy;
@@ -46,15 +47,8 @@ mod staging_util;
 #[cfg(feature = "deploy")]
 pub mod test_util;
 
-#[ctor::ctor]
-fn add_private_reexports() {
-    stageleft::add_private_reexport(vec!["tokio", "time", "instant"], vec!["tokio", "time"]);
-    stageleft::add_private_reexport(vec!["bytes", "bytes"], vec!["bytes"]);
-}
-
-#[stageleft::runtime]
 #[cfg(test)]
-mod tests {
+mod test_init {
     #[ctor::ctor]
     fn init() {
         crate::deploy::init_test();

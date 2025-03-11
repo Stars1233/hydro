@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use gossip_kv::membership::MemberId;
 use rand::distributions::Distribution;
-use rand::{thread_rng, Rng};
+use rand::{Rng, thread_rng};
 
 /// This is a simple distribution that generates a random lower-case alphanumeric
 struct LowercaseAlphanumeric;
@@ -24,7 +24,6 @@ pub fn member_name(random_suffix_len: usize) -> &'static MemberId {
             let suffix: String = thread_rng()
                 .sample_iter(&LowercaseAlphanumeric)
                 .take(4)
-                .map(char::from)
                 .collect();
             format!("{}-{}", hostname, suffix)
         } else {

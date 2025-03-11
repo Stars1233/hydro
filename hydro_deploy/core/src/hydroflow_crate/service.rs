@@ -3,19 +3,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::Future;
 use hydroflow_deploy_integration::{InitConfig, ServerPort};
 use serde::Serialize;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
-use super::build::{build_crate_memoized, BuildError, BuildOutput, BuildParams};
+use super::build::{BuildError, BuildOutput, BuildParams, build_crate_memoized};
 use super::ports::{self, HydroflowPortConfig, HydroflowSink, SourcePath};
 use super::tracing_options::TracingOptions;
 use crate::progress::ProgressTracker;
 use crate::{
     Host, LaunchedBinary, LaunchedHost, ResourceBatch, ResourceResult, ServerStrategy, Service,
+    TracingResults,
 };
 
 pub struct HydroflowCrateService {
@@ -160,11 +161,25 @@ impl HydroflowCrateService {
         self.launched_binary.as_ref().unwrap().stderr()
     }
 
+    pub fn stdout_filter(&self, prefix: String) -> mpsc::UnboundedReceiver<String> {
+        self.launched_binary.as_ref().unwrap().stdout_filter(prefix)
+    }
+
+    pub fn stderr_filter(&self, prefix: String) -> mpsc::UnboundedReceiver<String> {
+        self.launched_binary.as_ref().unwrap().stderr_filter(prefix)
+    }
+
+    pub fn tracing_results(&self) -> Option<&TracingResults> {
+        self.launched_binary.as_ref().unwrap().tracing_results()
+    }
+
     pub fn exit_code(&self) -> Option<i32> {
         self.launched_binary.as_ref().unwrap().exit_code()
     }
 
-    fn build(&self) -> impl Future<Output = Result<&'static BuildOutput, BuildError>> {
+    fn build(
+        &self,
+    ) -> impl use<> + 'static + Future<Output = Result<&'static BuildOutput, BuildError>> {
         // Memoized, so no caching in `self` is needed.
         build_crate_memoized(self.build_params.clone())
     }

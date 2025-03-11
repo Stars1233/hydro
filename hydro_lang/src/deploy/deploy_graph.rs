@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::io::Error;
 use std::pin::Pin;
@@ -11,15 +11,15 @@ use dfir_rs::bytes::Bytes;
 use dfir_rs::futures::{Sink, SinkExt, Stream, StreamExt};
 use dfir_rs::util::deploy::{ConnectedSink, ConnectedSource};
 use hydro_deploy::custom_service::CustomClientPort;
+use hydro_deploy::hydroflow_crate::HydroflowCrateService;
 use hydro_deploy::hydroflow_crate::ports::{
     DemuxSink, HydroflowSink, HydroflowSource, TaggedSource,
 };
 use hydro_deploy::hydroflow_crate::tracing_options::TracingOptions;
-use hydro_deploy::hydroflow_crate::HydroflowCrateService;
-use hydro_deploy::{CustomService, Deployment, Host, HydroflowCrate};
+use hydro_deploy::{CustomService, Deployment, Host, HydroflowCrate, TracingResults};
 use nameof::name_of;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use stageleft::{QuotedWithContext, RuntimeData};
 use tokio::sync::RwLock;
 
@@ -391,6 +391,27 @@ pub trait DeployCrateWrapper {
     async fn stderr(&self) -> tokio::sync::mpsc::UnboundedReceiver<String> {
         self.underlying().read().await.stderr()
     }
+
+    #[expect(async_fn_in_trait, reason = "no auto trait bounds needed")]
+    async fn stdout_filter(
+        &self,
+        prefix: impl Into<String>,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<String> {
+        self.underlying().read().await.stdout_filter(prefix.into())
+    }
+
+    #[expect(async_fn_in_trait, reason = "no auto trait bounds needed")]
+    async fn stderr_filter(
+        &self,
+        prefix: impl Into<String>,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<String> {
+        self.underlying().read().await.stderr_filter(prefix.into())
+    }
+
+    #[expect(async_fn_in_trait, reason = "no auto trait bounds needed")]
+    async fn tracing_results(&self) -> Option<TracingResults> {
+        self.underlying().read().await.tracing_results().cloned()
+    }
 }
 
 #[derive(Clone)]
@@ -398,6 +419,7 @@ pub struct TrybuildHost {
     pub host: Arc<dyn Host>,
     pub display_name: Option<String>,
     pub rustflags: Option<String>,
+    pub additional_hydro_features: Vec<String>,
     pub tracing: Option<TracingOptions>,
     pub name_hint: Option<String>,
     pub cluster_idx: Option<usize>,
@@ -409,6 +431,7 @@ impl From<Arc<dyn Host>> for TrybuildHost {
             host,
             display_name: None,
             rustflags: None,
+            additional_hydro_features: vec![],
             tracing: None,
             name_hint: None,
             cluster_idx: None,
@@ -422,6 +445,7 @@ impl<H: Host + 'static> From<Arc<H>> for TrybuildHost {
             host,
             display_name: None,
             rustflags: None,
+            additional_hydro_features: vec![],
             tracing: None,
             name_hint: None,
             cluster_idx: None,
@@ -435,6 +459,7 @@ impl TrybuildHost {
             host,
             display_name: None,
             rustflags: None,
+            additional_hydro_features: vec![],
             tracing: None,
             name_hint: None,
             cluster_idx: None,
@@ -463,6 +488,13 @@ impl TrybuildHost {
         }
     }
 
+    pub fn additional_hydro_features(self, additional_hydro_features: Vec<String>) -> Self {
+        Self {
+            additional_hydro_features,
+            ..self
+        }
+    }
+
     pub fn tracing(self, tracing: TracingOptions) -> Self {
         if self.tracing.is_some() {
             panic!("{} already set", name_of!(tracing in Self));
@@ -482,6 +514,7 @@ impl IntoProcessSpec<'_, HydroDeploy> for Arc<dyn Host> {
             host: self,
             display_name: None,
             rustflags: None,
+            additional_hydro_features: vec![],
             tracing: None,
             name_hint: None,
             cluster_idx: None,
@@ -496,6 +529,7 @@ impl<H: Host + 'static> IntoProcessSpec<'_, HydroDeploy> for Arc<H> {
             host: self,
             display_name: None,
             rustflags: None,
+            additional_hydro_features: vec![],
             tracing: None,
             name_hint: None,
             cluster_idx: None,
@@ -664,7 +698,7 @@ impl Node for DeployNode {
     fn update_meta(&mut self, meta: &Self::Meta) {
         let underlying_node = self.underlying.borrow();
         let mut n = underlying_node.as_ref().unwrap().try_write().unwrap();
-        n.update_meta(HydroflowPlusMeta {
+        n.update_meta(HydroMeta {
             clusters: meta.clone(),
             cluster_id: None,
             subgraph_id: self.id,
@@ -681,8 +715,12 @@ impl Node for DeployNode {
         let service = match self.service_spec.borrow_mut().take().unwrap() {
             CrateOrTrybuild::Crate(c) => c,
             CrateOrTrybuild::Trybuild(trybuild) => {
-                let (bin_name, (dir, target_dir, features)) =
-                    create_graph_trybuild(graph, extra_stmts, &trybuild.name_hint);
+                let (bin_name, (dir, target_dir, features)) = create_graph_trybuild(
+                    graph,
+                    extra_stmts,
+                    &trybuild.name_hint,
+                    &trybuild.additional_hydro_features,
+                );
                 create_trybuild_service(trybuild, &dir, &target_dir, &features, &bin_name)
             }
         };
@@ -745,7 +783,30 @@ impl Node for DeployCluster {
             .any(|spec| matches!(spec, CrateOrTrybuild::Trybuild { .. }));
 
         let maybe_trybuild = if has_trybuild {
-            Some(create_graph_trybuild(graph, extra_stmts, &self.name_hint))
+            let all_features = self
+                .cluster_spec
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|spec| match spec {
+                    CrateOrTrybuild::Crate(_c) => panic!("unexpected crate in cluster"),
+                    CrateOrTrybuild::Trybuild(t) => t.additional_hydro_features.clone(),
+                })
+                .collect::<HashSet<_>>();
+
+            assert!(
+                all_features.len() == 1,
+                "all trybuilds in a cluster must have the same features"
+            );
+            let features = all_features.into_iter().next().unwrap();
+
+            Some(create_graph_trybuild(
+                graph,
+                extra_stmts,
+                &self.name_hint,
+                &features,
+            ))
         } else {
             None
         };
@@ -779,7 +840,7 @@ impl Node for DeployCluster {
     fn update_meta(&mut self, meta: &Self::Meta) {
         for (cluster_id, node) in self.members.borrow().iter().enumerate() {
             let mut n = node.underlying.try_write().unwrap();
-            n.update_meta(HydroflowPlusMeta {
+            n.update_meta(HydroMeta {
                 clusters: meta.clone(),
                 cluster_id: Some(cluster_id as u32),
                 subgraph_id: self.id,

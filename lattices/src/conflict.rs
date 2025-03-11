@@ -56,7 +56,7 @@ where
 {
     fn merge(&mut self, other: Conflict<O>) -> bool {
         if let Some(val_self) = &self.0 {
-            if other.0.map_or(true, |val_other| val_self != &val_other) {
+            if other.0.is_none_or(|val_other| val_self != &val_other) {
                 self.0 = None;
                 return true;
             }
@@ -114,11 +114,11 @@ impl<T> IsTop for Conflict<T> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::WithBot;
     use crate::test::{
         check_all, check_lattice_is_bot, check_lattice_is_top, check_lattice_ord,
         check_lattice_properties, check_partial_ord_properties,
     };
-    use crate::WithBot;
 
     #[test]
     fn consistency() {

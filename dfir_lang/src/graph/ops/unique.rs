@@ -1,8 +1,8 @@
 use quote::quote_spanned;
 
 use super::{
-    OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance,
-    OperatorWriteOutput, Persistence, WriteContextArgs, RANGE_0, RANGE_1,
+    OpInstGenerics, OperatorCategory, OperatorConstraints, OperatorInstance, OperatorWriteOutput,
+    Persistence, RANGE_0, RANGE_1, WriteContextArgs,
 };
 use crate::diagnostic::{Diagnostic, Level};
 
@@ -62,7 +62,8 @@ pub const UNIQUE: OperatorConstraints = OperatorConstraints {
                    root,
                    op_span,
                    context,
-                   hydroflow,
+                   df_ident,
+                   loop_id,
                    ident,
                    inputs,
                    outputs,
@@ -78,11 +79,13 @@ pub const UNIQUE: OperatorConstraints = OperatorConstraints {
                    ..
                },
                diagnostics| {
-        let persistence = match persistence_args[..] {
-            [] => Persistence::Tick,
-            [a] => a,
-            _ => unreachable!(),
-        };
+        let persistence = persistence_args.first().copied().unwrap_or_else(|| {
+            if loop_id.is_some() {
+                Persistence::None
+            } else {
+                Persistence::Tick
+            }
+        });
 
         let input = &inputs[0];
         let output = &outputs[0];
@@ -90,24 +93,36 @@ pub const UNIQUE: OperatorConstraints = OperatorConstraints {
         let uniquedata_ident = wc.make_ident("uniquedata");
 
         let (write_prologue, get_set) = match persistence {
+            Persistence::None => (
+                Default::default(),
+                quote_spanned! {op_span=>
+                    let mut set = #root::rustc_hash::FxHashSet::default();
+                },
+            ),
             Persistence::Tick => {
                 let write_prologue = quote_spanned! {op_span=>
-                    let #uniquedata_ident = #hydroflow.add_state(::std::cell::RefCell::new(
+                    let #uniquedata_ident = #df_ident.add_state(::std::cell::RefCell::new(
                         #root::util::monotonic_map::MonotonicMap::<_, #root::rustc_hash::FxHashSet<_>>::default(),
                     ));
                 };
                 let get_set = quote_spanned! {op_span=>
-                    let mut borrow = #context.state_ref(#uniquedata_ident).borrow_mut();
+                    let mut borrow = unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        #context.state_ref_unchecked(#uniquedata_ident)
+                    }.borrow_mut();
                     let set = borrow.get_mut_clear((#context.current_tick(), #context.current_stratum()));
                 };
                 (write_prologue, get_set)
             }
             Persistence::Static => {
                 let write_prologue = quote_spanned! {op_span=>
-                    let #uniquedata_ident = #hydroflow.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashSet::default()));
+                    let #uniquedata_ident = #df_ident.add_state(::std::cell::RefCell::new(#root::rustc_hash::FxHashSet::default()));
                 };
                 let get_set = quote_spanned! {op_span=>
-                    let mut set = #context.state_ref(#uniquedata_ident).borrow_mut();
+                    let mut set = unsafe {
+                        // SAFETY: handle from `#df_ident.add_state(..)`.
+                        #context.state_ref_unchecked(#uniquedata_ident)
+                    }.borrow_mut();
                 };
                 (write_prologue, get_set)
             }

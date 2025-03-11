@@ -1,7 +1,8 @@
 stageleft::stageleft_crate!(stageleft_test_macro);
 
-use stageleft::{q, BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData};
+use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
 
+pub(crate) mod features;
 pub(crate) mod submodule;
 
 #[stageleft::entry]
@@ -42,7 +43,7 @@ fn crate_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     q!(crate::my_top_level_function())
 }
 
-#[stageleft::runtime]
+#[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
     use super::*;
